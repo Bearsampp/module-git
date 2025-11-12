@@ -1,0 +1,613 @@
+/*
+ * Bearsampp Module Git - Gradle Build
+ *
+ * Pure Gradle build configuration for Git module packaging.
+ */
+
+plugins {
+    id 'base'
+}
+
+// Load build properties
+def buildProps = new Properties()
+file('build.properties').withInputStream { buildProps.load(it) }
+
+// Project information
+group = 'com.bearsampp.modules'
+version = buildProps.getProperty('bundle.release', '1.0.0')
+description = "Bearsampp Module - ${buildProps.getProperty('bundle.name', 'git')}"
+
+// Define project paths
+ext {
+    projectBasedir = projectDir.absolutePath
+    rootDir = projectDir.parent
+    devPath = file("${rootDir}/dev").absolutePath
+
+    // Bundle properties from build.properties
+    bundleName = buildProps.getProperty('bundle.name', 'git')
+    bundleRelease = buildProps.getProperty('bundle.release', '1.0.0')
+    bundleType = buildProps.getProperty('bundle.type', 'tools')
+    bundleFormat = buildProps.getProperty('bundle.format', '7z')
+
+    // Build paths
+    def buildPathFromProps = buildProps.getProperty('build.path', '').trim()
+    def buildPathFromEnv = System.getenv('BEARSAMPP_BUILD_PATH') ?: ''
+    def defaultBuildPath = "${rootDir}/bearsampp-build"
+    
+    buildBasePath = buildPathFromProps ?: (buildPathFromEnv ?: defaultBuildPath)
+    
+    // Use shared bearsampp-build/tmp directory structure
+    buildTmpPath = file("${buildBasePath}/tmp").absolutePath
+    bundleTmpBuildPath = file("${buildTmpPath}/bundles_build/${bundleType}/${bundleName}").absolutePath
+    bundleTmpPrepPath = file("${buildTmpPath}/bundles_prep/${bundleType}/${bundleName}").absolutePath
+    bundleTmpSrcPath = file("${buildTmpPath}/bundles_src").absolutePath
+    
+    // Download and extract paths
+    bundleTmpDownloadPath = file("${buildTmpPath}/downloads/${bundleName}").absolutePath
+    bundleTmpExtractPath = file("${buildTmpPath}/extract/${bundleName}").absolutePath
+}
+
+// Load releases properties
+ext.releasesProps = new Properties()
+file('releases.properties').withInputStream { ext.releasesProps.load(it) }
+
+// Load untouched module versions from GitHub
+def loadRemoteGitProperties() {
+    def remoteUrl = "https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/git.properties"
+    
+    try {
+        println "Loading remote git.properties from modules-untouched..."
+        def connection = new URL(remoteUrl).openConnection()
+        connection.setConnectTimeout(10000)
+        connection.setReadTimeout(10000)
+        
+        def remoteProps = new Properties()
+        connection.inputStream.withStream { stream ->
+            remoteProps.load(stream)
+        }
+        
+        println "  Loaded ${remoteProps.size()} versions from remote git.properties"
+        return remoteProps
+    } catch (Exception e) {
+        println "  Warning: Could not load remote git.properties: ${e.message}"
+        return new Properties()
+    }
+}
+
+// Function to find 7-Zip executable
+def find7ZipExecutable() {
+    // Check environment variable
+    def sevenZipHome = System.getenv('7Z_HOME')
+    if (sevenZipHome) {
+        def exe = file("${sevenZipHome}/7z.exe")
+        if (exe.exists()) {
+            return exe.absolutePath
+        }
+    }
+
+    // Check common installation paths
+    def commonPaths = [
+        'C:/Program Files/7-Zip/7z.exe',
+        'C:/Program Files (x86)/7-Zip/7z.exe',
+        'D:/Program Files/7-Zip/7z.exe',
+        'D:/Program Files (x86)/7-Zip/7z.exe'
+    ]
+
+    for (path in commonPaths) {
+        def exe = file(path)
+        if (exe.exists()) {
+            return exe.absolutePath
+        }
+    }
+
+    // Try to find in PATH
+    try {
+        def process = ['where', '7z.exe'].execute()
+        process.waitFor()
+        if (process.exitValue() == 0) {
+            def output = process.text.trim()
+            if (output) {
+                return output.split('\n')[0].trim()
+            }
+        }
+    } catch (Exception e) {
+        // Ignore
+    }
+
+    return null
+}
+
+// Helper function to get available versions
+def getAvailableVersions() {
+    def versions = []
+    
+    // Check bin directory
+    def binDir = file("${projectDir}/bin")
+    if (binDir.exists()) {
+        def binVersions = binDir.listFiles()
+            ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) && it.name != 'archived' }
+            ?.collect { it.name.replace(bundleName, '') } ?: []
+        versions.addAll(binVersions)
+    }
+    
+    // Check bin/archived subdirectory
+    def archivedDir = file("${projectDir}/bin/archived")
+    if (archivedDir.exists()) {
+        def archivedVersions = archivedDir.listFiles()
+            ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) }
+            ?.collect { it.name.replace(bundleName, '') } ?: []
+        versions.addAll(archivedVersions)
+    }
+    
+    // Remove duplicates and sort
+    return versions.unique().sort()
+}
+
+// Function to download and extract Git binaries
+def downloadAndExtractGit(String version, File destDir) {
+    def downloadUrl = releasesProps.getProperty(version)
+    if (!downloadUrl) {
+        // Check remote git.properties from modules-untouched
+        println "Version ${version} not found in releases.properties"
+        println "Checking remote git.properties from modules-untouched..."
+        
+        def remoteProps = loadRemoteGitProperties()
+        downloadUrl = remoteProps.getProperty(version)
+        
+        if (!downloadUrl) {
+            throw new GradleException("""
+                Version ${version} not found in releases.properties or remote git.properties.
+                
+                Please either:
+                1. Add the version to releases.properties with a download URL
+                2. Add the version to https://github.com/Bearsampp/modules-untouched/blob/main/modules/git.properties
+            """.stripIndent())
+        }
+    }
+
+    println "Downloading Git ${version} from:"
+    println "  ${downloadUrl}"
+
+    // Determine filename from URL
+    def filename = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1)
+    def downloadDir = file(bundleTmpDownloadPath)
+    def extractDir = file(bundleTmpExtractPath)
+    downloadDir.mkdirs()
+    extractDir.mkdirs()
+
+    def downloadedFile = file("${downloadDir}/${filename}")
+
+    // Download if not already present
+    if (!downloadedFile.exists()) {
+        println "  Downloading to: ${downloadedFile}"
+        ant.get(src: downloadUrl, dest: downloadedFile, verbose: true)
+        println "  Download complete"
+    } else {
+        println "  Using cached file: ${downloadedFile}"
+    }
+
+    // Extract the archive
+    println "  Extracting archive..."
+    def extractPath = file("${extractDir}/${version}")
+    if (extractPath.exists()) {
+        delete extractPath
+    }
+    extractPath.mkdirs()
+
+    // Use 7zip or built-in extraction
+    if (filename.endsWith('.7z')) {
+        def sevenZipPath = find7ZipExecutable()
+        if (sevenZipPath) {
+            println "  Using 7zip: ${sevenZipPath}"
+            def command = [
+                sevenZipPath.toString(),
+                'x',
+                downloadedFile.absolutePath.toString(),
+                "-o${extractPath.absolutePath}".toString(),
+                '-y'
+            ]
+            def process = new ProcessBuilder(command as String[])
+                .directory(extractPath)
+                .redirectErrorStream(true)
+                .start()
+
+            process.inputStream.eachLine { line ->
+                println "    ${line}"
+            }
+
+            def exitCode = process.waitFor()
+            if (exitCode != 0) {
+                throw new GradleException("7zip extraction failed with exit code: ${exitCode}")
+            }
+        } else {
+            throw new GradleException("7-Zip not found. Please install 7-Zip or set 7Z_HOME environment variable.")
+        }
+    } else if (filename.endsWith('.zip')) {
+        copy {
+            from zipTree(downloadedFile)
+            into extractPath
+        }
+    } else {
+        throw new GradleException("Unsupported archive format: ${filename}")
+    }
+
+    println "  Extraction complete"
+    println "  Git ${version} ready at: ${extractPath.absolutePath}"
+
+    return extractPath
+}
+
+// Helper function to generate hash files
+def generateHashFiles(File file) {
+    if (!file.exists()) {
+        throw new GradleException("File not found for hashing: ${file}")
+    }
+
+    // Generate MD5
+    def md5File = new File("${file.absolutePath}.md5")
+    def md5Hash = calculateHash(file, 'MD5')
+    md5File.text = "${md5Hash} ${file.name}\n"
+    println "  Created: ${md5File.name}"
+
+    // Generate SHA1
+    def sha1File = new File("${file.absolutePath}.sha1")
+    def sha1Hash = calculateHash(file, 'SHA-1')
+    sha1File.text = "${sha1Hash} ${file.name}\n"
+    println "  Created: ${sha1File.name}"
+
+    // Generate SHA256
+    def sha256File = new File("${file.absolutePath}.sha256")
+    def sha256Hash = calculateHash(file, 'SHA-256')
+    sha256File.text = "${sha256Hash} ${file.name}\n"
+    println "  Created: ${sha256File.name}"
+
+    // Generate SHA512
+    def sha512File = new File("${file.absolutePath}.sha512")
+    def sha512Hash = calculateHash(file, 'SHA-512')
+    sha512File.text = "${sha512Hash} ${file.name}\n"
+    println "  Created: ${sha512File.name}"
+}
+
+// Helper function to calculate hash
+def calculateHash(File file, String algorithm) {
+    def digest = java.security.MessageDigest.getInstance(algorithm)
+    file.withInputStream { stream ->
+        def buffer = new byte[8192]
+        def bytesRead
+        while ((bytesRead = stream.read(buffer)) != -1) {
+            digest.update(buffer, 0, bytesRead)
+        }
+    }
+    return digest.digest().collect { String.format('%02x', it) }.join('')
+}
+
+// Task: Main release task
+tasks.register('release') {
+    group = 'build'
+    description = 'Build release package (use -PbundleVersion=X.X.X to specify version)'
+
+    // Capture property at configuration time
+    def bundleVersionProperty = project.findProperty('bundleVersion')
+
+    doLast {
+        def versionToBuild = bundleVersionProperty
+
+        // Interactive mode if no version specified
+        if (!versionToBuild) {
+            def versions = getAvailableVersions()
+
+            if (versions.isEmpty()) {
+                throw new GradleException("No versions found in bin/ or bin/archived/ directories")
+            }
+
+            println ""
+            println "=".multiply(70)
+            println "Available ${bundleName} versions:"
+            println "=".multiply(70)
+            
+            // Show versions with location tags
+            def binDir = file("${projectDir}/bin")
+            def archivedDir = file("${projectDir}/bin/archived")
+            
+            versions.eachWithIndex { version, index ->
+                def location = ""
+                if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
+                    location = "[bin]"
+                } else if (archivedDir.exists() && file("${archivedDir}/${bundleName}${version}").exists()) {
+                    location = "[bin/archived]"
+                }
+                println "  ${(index + 1).toString().padLeft(2)}. ${version.padRight(15)} ${location}"
+            }
+            println "=".multiply(70)
+            println ""
+            println "Enter version number or full version string: "
+            println ""
+
+            // Read input
+            def input = null
+            try {
+                def reader = new BufferedReader(new InputStreamReader(System.in))
+                input = reader.readLine()
+            } catch (Exception e) {
+                throw new GradleException("""
+                    Failed to read input. Please use non-interactive mode:
+                      gradle release -PbundleVersion=X.X.X
+
+                    Available versions: ${versions.join(', ')}
+                """.stripIndent())
+            }
+
+            if (!input || input.trim().isEmpty()) {
+                throw new GradleException("""
+                    No version selected. Please use non-interactive mode:
+                      gradle release -PbundleVersion=X.X.X
+
+                    Available versions: ${versions.join(', ')}
+                """.stripIndent())
+            }
+
+            input = input.trim()
+
+            // Check if input is a number (index selection)
+            if (input.isInteger()) {
+                def index = input.toInteger() - 1
+                if (index >= 0 && index < versions.size()) {
+                    versionToBuild = versions[index]
+                } else {
+                    throw new GradleException("Invalid selection: ${input}. Please choose 1-${versions.size()}")
+                }
+            } else {
+                // Direct version string
+                versionToBuild = input
+            }
+
+            println ""
+            println "Selected version: ${versionToBuild}"
+        }
+
+        println "=".multiply(70)
+        println "Building release for ${bundleName} version ${versionToBuild}..."
+        println "=".multiply(70)
+
+        // Check both bin/ and bin/archived/ directories
+        def bundlePath = file("${projectDir}/bin/${bundleName}${versionToBuild}")
+        
+        if (!bundlePath.exists()) {
+            bundlePath = file("${projectDir}/bin/archived/${bundleName}${versionToBuild}")
+        }
+
+        if (!bundlePath.exists()) {
+            def allVersions = getAvailableVersions()
+            def availableVersionsList = allVersions.collect { 
+                "  - ${it}" 
+            }.join('\n') ?: "  (none found)"
+
+            throw new GradleException("""
+                Bundle version not found: ${bundleName}${versionToBuild}
+
+                Available versions:
+                ${availableVersionsList}
+            """.stripIndent())
+        }
+
+        println "Bundle path: ${bundlePath}"
+        println ""
+
+        // Get the untouched module source
+        def bundleFolder = bundlePath.name
+        def bundleVersion = bundleFolder.replace(bundleName, '')
+
+        // Download and extract Git binaries
+        def gitSrcDir = downloadAndExtractGit(bundleVersion, file(bundleTmpExtractPath))
+
+        // Check if gitSrcDir contains a nested folder with the bundle name
+        def actualGitSrcDir = gitSrcDir
+        def nestedDir = new File(gitSrcDir, bundleFolder)
+        if (nestedDir.exists() && nestedDir.isDirectory()) {
+            actualGitSrcDir = nestedDir
+            println "Using nested directory: ${actualGitSrcDir.name}"
+        }
+
+        // Prepare output directory
+        def gitPrepPath = file("${bundleTmpPrepPath}/${bundleFolder}")
+        if (gitPrepPath.exists()) {
+            delete gitPrepPath
+        }
+        gitPrepPath.mkdirs()
+
+        // Copy Git files from extracted source
+        println "Copying Git files..."
+        copy {
+            from actualGitSrcDir
+            into gitPrepPath
+            exclude 'doc/**'
+        }
+
+        // Copy bundle customizations
+        println "Copying bundle customizations..."
+        copy {
+            from bundlePath
+            into gitPrepPath
+        }
+
+        // Replace @RELEASE_VERSION@ in bearsampp.conf
+        def bearsamppConf = file("${gitPrepPath}/bearsampp.conf")
+        if (bearsamppConf.exists()) {
+            def content = bearsamppConf.text
+            bearsamppConf.text = content.replace('@RELEASE_VERSION@', bundleRelease)
+        }
+
+        println ""
+        println "Preparing archive..."
+
+        // Determine build output path
+        def buildPath = file(buildBasePath)
+        def buildToolsPath = file("${buildPath}/${bundleType}/${bundleName}/${bundleRelease}")
+        buildToolsPath.mkdirs()
+
+        // Build archive filename
+        def destFile = file("${buildToolsPath}/bearsampp-${bundleName}-${bundleVersion}-${bundleRelease}")
+
+        // Compress based on format
+        if (bundleFormat == '7z') {
+            def archiveFile = file("${destFile}.7z")
+            if (archiveFile.exists()) {
+                delete archiveFile
+            }
+
+            println "Compressing ${bundleName}${bundleVersion} to ${archiveFile.name}..."
+
+            def sevenZipExe = find7ZipExecutable()
+            if (!sevenZipExe) {
+                throw new GradleException("7-Zip not found. Please install 7-Zip or set 7Z_HOME environment variable.")
+            }
+
+            println "Using 7-Zip: ${sevenZipExe}"
+
+            def command = [
+                sevenZipExe,
+                'a',
+                '-t7z',
+                archiveFile.absolutePath.toString(),
+                '.'
+            ]
+
+            def process = new ProcessBuilder(command as String[])
+                .directory(gitPrepPath)
+                .redirectErrorStream(true)
+                .start()
+
+            process.inputStream.eachLine { line ->
+                if (line.trim()) println "  ${line}"
+            }
+
+            def exitCode = process.waitFor()
+            if (exitCode != 0) {
+                throw new GradleException("7zip compression failed with exit code: ${exitCode}")
+            }
+
+            println "Archive created: ${archiveFile}"
+
+            // Generate hash files
+            println "Generating hash files..."
+            generateHashFiles(archiveFile)
+
+        } else {
+            def archiveFile = file("${destFile}.zip")
+            if (archiveFile.exists()) {
+                delete archiveFile
+            }
+
+            println "Compressing ${bundleName}${bundleVersion} to ${archiveFile.name}..."
+
+            ant.zip(destfile: archiveFile, basedir: gitPrepPath)
+
+            println "Archive created: ${archiveFile}"
+
+            // Generate hash files
+            println "Generating hash files..."
+            generateHashFiles(archiveFile)
+        }
+
+        println ""
+        println "=".multiply(70)
+        println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
+        println "Output directory: ${buildToolsPath}"
+        println "Archive: ${destFile}.${bundleFormat}"
+        println "=".multiply(70)
+    }
+}
+
+// Task: List available bundle versions
+tasks.register('listVersions') {
+    group = 'help'
+    description = 'List all available bundle versions in bin/ and bin/archived/ directories'
+
+    doLast {
+        def versions = getAvailableVersions()
+
+        if (versions.isEmpty()) {
+            println "\nNo versions found in bin/ or bin/archived/ directories"
+            return
+        }
+
+        println "\nAvailable ${bundleName} versions:"
+        println "-".multiply(60)
+        
+        def binDir = file("${projectDir}/bin")
+        def archivedDir = file("${projectDir}/bin/archived")
+        
+        versions.each { version ->
+            def location = ""
+            if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
+                location = "[bin]"
+            } else if (archivedDir.exists() && file("${archivedDir}/${bundleName}${version}").exists()) {
+                location = "[bin/archived]"
+            }
+            println "  ${version.padRight(15)} ${location}"
+        }
+        println "-".multiply(60)
+        println "Total versions: ${versions.size()}"
+
+        if (!versions.isEmpty()) {
+            println "\nTo build a specific version:"
+            println "  gradle release -PbundleVersion=${versions.last()}"
+        }
+    }
+}
+
+// Task: Enhanced clean task
+tasks.named('clean') {
+    group = 'build'
+    description = 'Clean build artifacts and temporary files'
+
+    doLast {
+        def buildDir = file("${projectDir}/build")
+        if (buildDir.exists()) {
+            delete buildDir
+        }
+
+        println "[SUCCESS] Build artifacts cleaned"
+    }
+}
+
+// Task: Display build information
+tasks.register('info') {
+    group = 'help'
+    description = 'Display build configuration information'
+
+    def projectName = project.name
+    def projectVersion = project.version
+    def projectDescription = project.description
+    def bundleNameValue = bundleName
+    def bundleReleaseValue = bundleRelease
+    def bundleTypeValue = bundleType
+    def bundleFormatValue = bundleFormat
+
+    doLast {
+        println """
+        ================================================================
+                  Bearsampp Module Git - Build Info
+        ================================================================
+
+        Project:        ${projectName}
+        Version:        ${projectVersion}
+        Description:    ${projectDescription}
+
+        Bundle Properties:
+          Name:         ${bundleNameValue}
+          Release:      ${bundleReleaseValue}
+          Type:         ${bundleTypeValue}
+          Format:       ${bundleFormatValue}
+
+        Quick Start:
+          gradle tasks                          - List all available tasks
+          gradle info                           - Show this information
+          gradle listVersions                   - List available versions
+          gradle release -PbundleVersion=2.51.2 - Build release for version
+          gradle clean                          - Clean build artifacts
+        """.stripIndent()
+    }
+}
+
+defaultTasks 'info'
