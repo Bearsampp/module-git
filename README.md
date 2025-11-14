@@ -12,17 +12,20 @@ This project uses Gradle for building. See [.gradle-docs/](.gradle-docs/) for co
 ### Quick Start
 
 ```bash
-# Build latest version
-gradle buildRelease
+# Show build information
+gradle info
 
-# Build specific version
-gradle buildRelease -PbundleVersion=2.51.2
-
-# Build all versions
-gradle buildAllReleases
-
-# Show available versions
+# List available versions
 gradle listVersions
+
+# Build a specific version (interactive)
+gradle release
+
+# Build a specific version (non-interactive)
+gradle release -PbundleVersion=2.51.2
+
+# Clean build artifacts
+gradle clean
 ```
 
 ### Documentation

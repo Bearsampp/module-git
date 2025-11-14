@@ -29,14 +29,17 @@ If missing:
 # Navigate to project
 cd E:/Bearsampp-development/module-git
 
-# Show available versions
+# Show build information
+gradle info
+
+# List available versions
 gradle listVersions
 
-# Build latest version
-gradle buildRelease
+# Build a specific version (interactive)
+gradle release
 
-# Find output
-ls ../build/
+# Build a specific version (non-interactive)
+gradle release -PbundleVersion=2.51.2
 ```
 
 That's it! Your first build is complete.
@@ -46,30 +49,21 @@ That's it! Your first build is complete.
 ### Build Commands
 
 ```bash
-# Build latest version
-gradle buildRelease
+# Build a specific version (interactive)
+gradle release
 
-# Build specific version
-gradle buildRelease -PbundleVersion=2.51.2
-
-# Build all versions
-gradle buildAllReleases
-
-# Build with parallel execution
-gradle buildAllReleases --parallel
+# Build a specific version (non-interactive)
+gradle release -PbundleVersion=2.51.2
 ```
 
 ### Information Commands
 
 ```bash
 # Show build configuration
-gradle buildInfo
+gradle info
 
 # List all available versions
 gradle listVersions
-
-# Verify bundle structure
-gradle verifyBundle
 ```
 
 ### Maintenance Commands
@@ -79,7 +73,7 @@ gradle verifyBundle
 gradle clean
 
 # Clean and rebuild
-gradle clean buildRelease
+gradle clean release
 
 # Show all tasks
 gradle tasks
@@ -90,11 +84,12 @@ gradle tasks
 ### Build Output Location
 
 ```
-../.tmp/
+bearsampp-build/
 ├── tmp/
-│   ├── src/              # Downloaded sources
-│   └── prep/             # Prepared bundles
-└── dist/                 # Final releases ← YOUR FILES ARE HERE
+│   ├── downloads/git/    # Downloaded archives
+│   ├── extract/git/      # Extracted sources
+│   └── bundles_prep/     # Prepared bundles
+└── tools/git/2025.11.1/  # Final releases ← YOUR FILES ARE HERE
     └── bearsampp-git-2.51.2-2025.11.1.7z
 ```
 
@@ -112,13 +107,13 @@ bearsampp-{module}-{version}-{release}.{format}
 
 ```bash
 # Try with more logging
-gradle buildRelease --info
+gradle release --info
 
 # Or with debug output
-gradle buildRelease --debug
+gradle release --debug
 
 # Or with stack traces
-gradle buildRelease --stacktrace
+gradle release --stacktrace
 ```
 
 ### Clean Start
@@ -128,7 +123,7 @@ gradle buildRelease --stacktrace
 gradle clean
 
 # Rebuild from scratch
-gradle buildRelease --refresh-dependencies
+gradle release --refresh-dependencies
 ```
 
 ### Version Not Found
@@ -146,16 +141,13 @@ ls bin/
 1. **Read the full documentation**: `.gradle-docs/README.md`
 2. **Learn about migration**: `.gradle-docs/MIGRATION.md`
 3. **Explore the API**: `.gradle-docs/API.md`
-4. **Customize the build**: Edit `build.gradle.kts`
+4. **Customize the build**: Edit `build.gradle`
 
 ## Tips
 
 ### Speed Up Builds
 
 ```bash
-# Use parallel execution
-gradle buildAllReleases --parallel --max-workers=4
-
 # Use Gradle daemon (enabled by default)
 # Subsequent builds will be faster
 ```
@@ -176,14 +168,14 @@ gradle buildAllReleases --parallel --max-workers=4
 **GitHub Actions:**
 ```yaml
 - name: Build with Gradle
-  run: gradle buildRelease
+  run: gradle release -PbundleVersion=2.51.2
 ```
 
 **Jenkins:**
 ```groovy
 stage('Build') {
     steps {
-        sh 'gradle buildRelease'
+        sh 'gradle release -PbundleVersion=2.51.2'
     }
 }
 ```
@@ -196,36 +188,31 @@ stage('Build') {
 
 ## Cheat Sheet
 
-| Task | Command |
-|------|---------|
-| Build latest | `gradle buildRelease` |
-| Build specific | `gradle buildRelease -PbundleVersion=X.X.X` |
-| Build all | `gradle buildAllReleases` |
-| List versions | `gradle listVersions` |
-| Show info | `gradle buildInfo` |
-| Verify | `gradle verifyBundle` |
-| Clean | `gradle clean` |
-| Help | `gradle tasks` |
+| Task             | Command                                  |
+|------------------|------------------------------------------|
+| Show info        | `gradle info`                            |
+| List versions    | `gradle listVersions`                    |
+| Build (interact) | `gradle release`                         |
+| Build specific   | `gradle release -PbundleVersion=X.X.X`   |
+| Clean            | `gradle clean`                           |
+| Help             | `gradle tasks`                           |
 
 ## Example Workflow
 
 ```bash
 # 1. Check configuration
-gradle buildInfo
+gradle info
 
 # 2. List available versions
 gradle listVersions
 
-# 3. Verify bundle structure
-gradle verifyBundle -PbundleVersion=2.51.2
+# 3. Build the release
+gradle release -PbundleVersion=2.51.2
 
-# 4. Build the release
-gradle buildRelease -PbundleVersion=2.51.2
+# 4. Check output
+ls -lh ../bearsampp-build/tools/git/2025.11.1/
 
-# 5. Check output
-ls -lh build/
-
-# 6. Clean up (optional)
+# 5. Clean up (optional)
 gradle clean
 ```
 

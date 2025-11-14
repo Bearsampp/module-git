@@ -1,368 +1,203 @@
-# Gradle Documentation Index
+# Bearsampp Module Git - Documentation Index
 
-Welcome to the Gradle build system documentation for module-git.
+## Overview
+
+This directory contains complete documentation for the Gradle-based build system for the Bearsampp Git module. The project has been fully converted from Ant to Gradle, providing a modern, maintainable build system.
 
 ## Documentation Structure
 
-### 📚 Core Documentation
+### Quick Start
+- **[QUICKSTART.md](QUICKSTART.md)** - Get started in 5 minutes
+  - Prerequisites check
+  - First build walkthrough
+  - Common commands
+  - Troubleshooting basics
 
-#### [README.md](README.md)
-**Complete user guide and reference**
-- Quick start instructions
-- Build configuration
-- Available tasks
-- Version management
-- Build process details
-- Troubleshooting guide
+### Complete Guides
+- **[README.md](README.md)** - Complete build documentation
+  - Project structure
+  - Configuration files
+  - Build process details
+  - Version management
+  - Advanced usage
 
-**Start here if:** You're new to the Gradle build system
+- **[TASKS.md](TASKS.md)** - Task reference card
+  - All available Gradle tasks
+  - Task options and combinations
+  - Common workflows
+  - Quick reference table
 
----
+- **[API.md](API.md)** - API reference
+  - Build script functions
+  - Project properties
+  - Custom task examples
+  - Error handling
 
-#### [INSTALLATION.md](INSTALLATION.md)
-**Complete installation guide**
-- Java installation
-- Gradle installation
-- 7-Zip installation
-- Environment setup
-- IDE configuration
-- Troubleshooting
+### Migration & Comparison
+- **[MIGRATION.md](MIGRATION.md)** - Ant to Gradle migration guide
+  - Migration steps
+  - Key differences
+  - Task mapping
 
-**Start here if:** You need to install prerequisites
+- **[COMPARISON.md](COMPARISON.md)** - Ant vs Gradle comparison
+  - Feature comparison
+  - Performance benefits
+  - Advantages of Gradle
 
----
+## Available Tasks
 
-#### [QUICKSTART.md](QUICKSTART.md)
-**5-minute setup guide**
-- Prerequisites check
-- First build
-- Common commands
-- Troubleshooting basics
-- Cheat sheet
+| Task           | Purpose                    | Example                                |
+|----------------|----------------------------|----------------------------------------|
+| `release`      | Build a release bundle     | `gradle release -PbundleVersion=X.X.X` |
+| `listVersions` | List available versions    | `gradle listVersions`                  |
+| `info`         | Show build configuration   | `gradle info`                          |
+| `clean`        | Clean build artifacts      | `gradle clean`                         |
+| `tasks`        | Show all available tasks   | `gradle tasks`                         |
 
-**Start here if:** You want to build immediately
+## Quick Reference
 
----
-
-#### [MIGRATION.md](MIGRATION.md)
-**Ant to Gradle migration guide**
-- Why Gradle?
-- Migration steps
-- Task mapping
-- Breaking changes
-- CI/CD updates
-- Testing migration
-
-**Start here if:** You're familiar with the Ant build
-
----
-
-#### [API.md](API.md)
-**Complete API reference**
-- Properties
-- Functions
-- Tasks
-- Command-line options
-- File formats
-- Error handling
-
-**Start here if:** You need detailed technical reference
-
----
-
-#### [COMPARISON.md](COMPARISON.md)
-**Ant vs Gradle comparison**
-- Side-by-side code examples
-- Feature comparison
-- Performance metrics
-- Maintainability analysis
-- Recommendation
-
-**Start here if:** You want to understand the differences
-
----
-
-#### [TASKS.md](TASKS.md)
-**Quick task reference card**
-- All available tasks
-- Task options
-- Common workflows
-- Quick reference table
-- Performance tips
-
-**Start here if:** You need a quick task reference
-
----
-
-## Quick Navigation
-
-### By Role
-
-#### 👨‍💻 Developer
-1. [QUICKSTART.md](QUICKSTART.md) - Get building fast
-2. [README.md](README.md) - Learn the details
-3. [API.md](API.md) - Reference when needed
-
-#### 🔧 Build Engineer
-1. [MIGRATION.md](MIGRATION.md) - Understand the migration
-2. [API.md](API.md) - Deep technical details
-3. [COMPARISON.md](COMPARISON.md) - Justify the change
-
-#### 📊 Project Manager
-1. [COMPARISON.md](COMPARISON.md) - See the benefits
-2. [MIGRATION.md](MIGRATION.md) - Understand the effort
-3. [README.md](README.md) - Overview of capabilities
-
-### By Task
-
-#### Building
-- **First build**: [QUICKSTART.md](QUICKSTART.md#first-build)
-- **Build specific version**: [README.md](README.md#buildrelease)
-- **Build all versions**: [README.md](README.md#buildallreleases)
-
-#### Configuration
-- **Build properties**: [README.md](README.md#build-configuration)
-- **Version management**: [README.md](README.md#version-management)
-- **Custom tasks**: [API.md](API.md#extension-points)
-
-#### Troubleshooting
-- **Common issues**: [README.md](README.md#troubleshooting)
-- **Debug mode**: [QUICKSTART.md](QUICKSTART.md#troubleshooting)
-- **Error reference**: [API.md](API.md#error-handling)
-
-#### Migration
-- **From Ant**: [MIGRATION.md](MIGRATION.md#migration-steps)
-- **Task mapping**: [MIGRATION.md](MIGRATION.md#task-migration)
-- **CI/CD updates**: [MIGRATION.md](MIGRATION.md#cicd-migration)
-
-## Key Concepts
-
-### Build System Architecture
-
-```
-module-git/
-├── build.gradle.kts          # Main build script
-├── settings.gradle.kts       # Project settings
-├── gradle.properties         # Gradle configuration
-├── build.properties          # Bundle configuration
-├── releases.properties       # Version mappings
-└── .gradle-docs/            # This documentation
-```
-
-### Build Flow
-
-```
-Configuration → Preparation → Build → Output
-     ↓              ↓           ↓        ↓
-Load props    Download src   Create   build/
-Load versions Extract files  archive  *.7z
-Validate      Copy files
-              Replace vars
-```
-
-### Task Dependencies
-
-```
-buildRelease
-    ↓
-prepareBundle
-    ↓
-downloadAndExtractModule
-```
-
-## Common Workflows
-
-### Development Workflow
+### Build Commands
 
 ```bash
-# 1. Check configuration
-gradle buildInfo
+# Show build information
+gradle info
 
-# 2. Verify bundle
-gradle verifyBundle
+# List available versions
+gradle listVersions
 
-# 3. Build
-gradle buildRelease
+# Build a specific version (interactive)
+gradle release
 
-# 4. Test output
-ls build/
-```
+# Build a specific version (non-interactive)
+gradle release -PbundleVersion=2.51.2
 
-### Release Workflow
-
-```bash
-# 1. Clean previous builds
+# Clean build artifacts
 gradle clean
-
-# 2. Build all versions
-gradle buildAllReleases --parallel
-
-# 3. Verify outputs
-ls -lh build/
-
-# 4. Upload to releases
-# (manual or automated)
 ```
 
-### Debugging Workflow
+### Configuration Files
 
-```bash
-# 1. Enable debug logging
-gradle buildRelease --debug
+| File                  | Purpose                           |
+|-----------------------|-----------------------------------|
+| `build.gradle`        | Main build script                 |
+| `build.properties`    | Bundle configuration              |
+| `releases.properties` | Version download URLs             |
+| `gradle.properties`   | Gradle configuration (optional)   |
+| `settings.gradle.kts` | Gradle settings                   |
 
-# 2. Check stack traces
-gradle buildRelease --stacktrace
+### Output Structure
 
-# 3. Verify configuration
-gradle buildInfo --info
+```
+bearsampp-build/
+├── tmp/
+│   ├── downloads/git/    # Downloaded archives
+│   ├── extract/git/      # Extracted sources
+│   └── bundles_prep/     # Prepared bundles
+└── tools/git/2025.11.1/  # Final releases
+    ├── bearsampp-git-2.51.2-2025.11.1.7z
+    ├── bearsampp-git-2.51.2-2025.11.1.7z.md5
+    ├── bearsampp-git-2.51.2-2025.11.1.7z.sha1
+    ├── bearsampp-git-2.51.2-2025.11.1.7z.sha256
+    └── bearsampp-git-2.51.2-2025.11.1.7z.sha512
 ```
 
-## Feature Highlights
+## Prerequisites
 
-### ✨ New Features (vs Ant)
-
-1. **Version Listing**
-   ```bash
-   gradle listVersions
-   ```
-   See all available versions from all sources
-
-2. **Bundle Verification**
-   ```bash
-   gradle verifyBundle
-   ```
-   Validate bundle structure before building
-
-3. **Build Information**
-   ```bash
-   gradle buildInfo
-   ```
-   Show current configuration
-
-4. **Parallel Builds**
-   ```bash
-   gradle buildAllReleases --parallel
-   ```
-   Build multiple versions simultaneously
-
-5. **Incremental Builds**
-   Automatic detection of changes
-
-6. **Better Caching**
-   Downloaded files cached and reused
-
-### 🚀 Performance Improvements
-
-- **2-3x faster** with caching
-- **Parallel execution** support
-- **Incremental builds** (only rebuild what changed)
-- **Smart dependency resolution**
-
-### 🛠️ Developer Experience
-
-- **Type-safe** Kotlin DSL
-- **IDE integration** (IntelliJ, VS Code)
-- **Better error messages**
-- **Autocomplete** in IDE
-- **Refactoring support**
-
-## Version Information
-
-### Current Version: 1.0.0
-
-**Release Date:** 2025-01-XX
-
-**Features:**
-- Complete Ant functionality
-- Additional utility tasks
-- Untouched modules support
-- Parallel build support
-- Comprehensive documentation
-
-**Compatibility:**
-- Gradle: 8.5+
-- Java: 8+
-- 7-Zip: Any version
+- **Java**: 8 or higher
+- **Gradle**: 6.0 or higher (wrapper included)
+- **7-Zip**: For .7z compression (optional for .zip)
 
 ## Getting Help
 
 ### Documentation
-- Start with [QUICKSTART.md](QUICKSTART.md)
-- Read [README.md](README.md) for details
-- Check [API.md](API.md) for reference
+- Start with [QUICKSTART.md](QUICKSTART.md) for immediate setup
+- Read [README.md](README.md) for comprehensive documentation
+- Check [TASKS.md](TASKS.md) for task reference
+- Explore [API.md](API.md) for advanced customization
 
-### Troubleshooting
-1. Check [README.md#troubleshooting](README.md#troubleshooting)
-2. Run with `--debug` flag
-3. Check [API.md#error-handling](API.md#error-handling)
+### Command Line Help
+```bash
+# Show all available tasks
+gradle tasks
 
-### Support
-- **Issues**: https://github.com/Bearsampp/module-git/issues
-- **Discussions**: https://github.com/Bearsampp/module-git/discussions
-- **Bearsampp**: https://github.com/Bearsampp/Bearsampp
+# Show build information
+gradle info
 
-### External Resources
-- **Gradle Docs**: https://docs.gradle.org
-- **Kotlin DSL**: https://docs.gradle.org/current/userguide/kotlin_dsl.html
-- **Best Practices**: https://docs.gradle.org/current/userguide/best_practices.html
+# Show task details
+gradle help --task release
+```
+
+### Common Issues
+
+| Issue                  | Solution                                    |
+|------------------------|---------------------------------------------|
+| 7-Zip not found        | Install 7-Zip or set `7Z_HOME` env variable |
+| Version not found      | Add to `releases.properties`                |
+| Java not found         | Install Java and set `JAVA_HOME`            |
+| Build fails            | Run with `--stacktrace` for details         |
+
+## Project Status
+
+✅ **Conversion Complete**: Ant build system fully replaced with Gradle
+✅ **Documentation Updated**: All docs aligned with Gradle tasks
+✅ **Ant Files Removed**: build.xml and related files removed
+✅ **Pure Gradle Build**: No Ant dependencies
+
+## Key Features
+
+### Build System
+- ✅ Pure Gradle build (no Ant dependencies)
+- ✅ Interactive version selection
+- ✅ Automatic download and extraction
+- ✅ Hash file generation (MD5, SHA1, SHA256, SHA512)
+- ✅ Shared build directory structure
+- ✅ Remote version fallback
+
+### Documentation
+- ✅ Comprehensive guides
+- ✅ Quick start guide
+- ✅ Task reference card
+- ✅ API documentation
+- ✅ Migration guide
+- ✅ Aligned tables and formatting
+
+### Developer Experience
+- ✅ Clear error messages
+- ✅ Progress indicators
+- ✅ Verbose logging options
+- ✅ IDE integration support
+- ✅ CI/CD ready
+
+## Version History
+
+| Version | Date       | Changes                              |
+|---------|------------|--------------------------------------|
+| 1.0.0   | 2025-01-XX | Initial Gradle conversion complete   |
+|         |            | - Removed Ant build system           |
+|         |            | - Updated all documentation          |
+|         |            | - Aligned tables and task names      |
 
 ## Contributing
 
-### Documentation
-- Keep docs up to date
-- Add examples
-- Improve clarity
-- Fix errors
+When contributing to the build system:
 
-### Build System
-- Add new tasks
-- Improve performance
-- Fix bugs
-- Add tests
+1. **Test Changes**: Always test build changes locally
+2. **Update Docs**: Keep documentation in sync with code
+3. **Follow Conventions**: Use existing patterns and naming
+4. **Add Examples**: Include usage examples for new features
 
-### Process
-1. Read documentation
-2. Make changes
-3. Test thoroughly
-4. Update docs
-5. Submit PR
+## Support
 
-## Changelog
-
-### 1.0.0 (2025-01-XX)
-- ✨ Initial Gradle conversion
-- ✨ All Ant features implemented
-- ✨ New tasks: listVersions, verifyBundle, buildInfo
-- ✨ Untouched modules support
-- ✨ Parallel build support
-- 📚 Complete documentation
-- 🔧 GitHub Actions workflow
-- 🧪 Comprehensive testing
-
-## Roadmap
-
-### Future Enhancements
-- [ ] Automated testing
-- [ ] Code coverage
-- [ ] Performance profiling
-- [ ] Docker support
-- [ ] Multi-platform builds
-- [ ] Automated releases
-- [ ] Version bumping
-- [ ] Changelog generation
+- **Issues**: https://github.com/Bearsampp/module-git/issues
+- **Documentation**: https://github.com/Bearsampp/module-git/tree/main/.gradle-docs
+- **Gradle Docs**: https://docs.gradle.org
 
 ## License
 
-Same as module-git project.
-
-## Acknowledgments
-
-- Bearsampp team
-- Gradle community
-- Contributors
+This project is part of the Bearsampp project. See LICENSE file for details.
 
 ---
 
-**Last Updated:** 2025-01-XX  
-**Maintainer:** Bearsampp Team  
-**Version:** 1.0.0
+**Last Updated**: 2025-01-XX  
+**Version**: 1.0.0  
+**Status**: ✅ Production Ready

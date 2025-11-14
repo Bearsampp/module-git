@@ -6,15 +6,15 @@ Quick reference for all available Gradle tasks in module-git.
 
 ### 🏗️ Build Tasks
 
-#### buildRelease
+#### release
 **Build a release bundle**
 
 ```bash
-# Build latest version
-gradle buildRelease
+# Build with interactive version selection
+gradle release
 
-# Build specific version
-gradle buildRelease -PbundleVersion=2.51.2
+# Build specific version (non-interactive)
+gradle release -PbundleVersion=2.51.2
 ```
 
 **What it does:**
@@ -24,58 +24,9 @@ gradle buildRelease -PbundleVersion=2.51.2
 4. Overlays bundle configuration
 5. Replaces version placeholders
 6. Creates 7z/zip archive
+7. Generates hash files (MD5, SHA1, SHA256, SHA512)
 
-**Output:** `build/bearsampp-git-{version}-{release}.{format}`
-
-**Dependencies:** prepareBundle
-
----
-
-#### buildAllReleases
-**Build all bundle versions**
-
-```bash
-# Build all versions sequentially
-gradle buildAllReleases
-
-# Build all versions in parallel
-gradle buildAllReleases --parallel
-
-# Build with 4 parallel workers
-gradle buildAllReleases --parallel --max-workers=4
-```
-
-**What it does:**
-- Finds all versions in bin/
-- Builds each version
-- Can run in parallel
-
-**Output:** Multiple files in `build/`
-
----
-
-#### prepareBundle
-**Prepare a bundle for packaging**
-
-```bash
-# Prepare latest version
-gradle prepareBundle
-
-# Prepare specific version
-gradle prepareBundle -PbundleVersion=2.51.2
-```
-
-**What it does:**
-1. Downloads source
-2. Extracts files
-3. Verifies git.exe exists
-4. Copies to prep directory
-5. Overlays configuration
-6. Replaces placeholders
-
-**Output:** `../.tmp/tmp/prep/git{version}/`
-
-**Used by:** buildRelease
+**Output:** `bearsampp-build/tools/git/{release}/bearsampp-git-{version}-{release}.{format}`
 
 ---
 
@@ -95,26 +46,35 @@ gradle clean
 
 ### 📋 Information Tasks
 
-#### buildInfo
+#### info
 **Show build configuration**
 
 ```bash
-gradle buildInfo
+gradle info
 ```
 
 **Output:**
 ```
-=== Build Configuration ===
-Bundle Name:    git
-Bundle Release: 2025.11.1
-Bundle Type:    tools
-Bundle Format:  7z
+================================================================
+          Bearsampp Module Git - Build Info
+================================================================
 
-Project Dir:    E:/Bearsampp-development/module-git
-Build Dir:      E:/Bearsampp-development/module-git/build
-Dist Dir:       E:/Bearsampp-development/module-git/release
+Project:        module-git
+Version:        2025.11.1
+Description:    Bearsampp Module - git
 
-Available Versions: 2.50.1, 2.51.2
+Bundle Properties:
+  Name:         git
+  Release:      2025.11.1
+  Type:         tools
+  Format:       7z
+
+Quick Start:
+  gradle tasks                          - List all available tasks
+  gradle info                           - Show this information
+  gradle listVersions                   - List available versions
+  gradle release -PbundleVersion=2.51.2 - Build release for version
+  gradle clean                          - Clean build artifacts
 ```
 
 ---
@@ -157,33 +117,6 @@ gradle tasks --all
 
 ---
 
-### ✅ Verification Tasks
-
-#### verifyBundle
-**Verify bundle structure**
-
-```bash
-# Verify latest version
-gradle verifyBundle
-
-# Verify specific version
-gradle verifyBundle -PbundleVersion=2.51.2
-```
-
-**What it checks:**
-- bearsampp.conf exists
-- Required files present
-
-**Output:**
-```
-Verifying bundle: git2.51.2
-  ✓ bearsampp.conf
-
-Bundle structure is valid ✓
-```
-
----
-
 ## Task Options
 
 ### Common Options
@@ -192,70 +125,49 @@ Bundle structure is valid ✓
 Pass properties to the build:
 
 ```bash
-gradle buildRelease -PbundleVersion=2.51.2
+gradle release -PbundleVersion=2.51.2
 ```
 
 #### --info
 Show info-level logging:
 
 ```bash
-gradle buildRelease --info
+gradle release --info
 ```
 
 #### --debug
 Show debug-level logging:
 
 ```bash
-gradle buildRelease --debug
+gradle release --debug
 ```
 
 #### --stacktrace
 Show stack traces on errors:
 
 ```bash
-gradle buildRelease --stacktrace
-```
-
-#### --parallel
-Enable parallel execution:
-
-```bash
-gradle buildAllReleases --parallel
-```
-
-#### --max-workers
-Set maximum parallel workers:
-
-```bash
-gradle buildAllReleases --parallel --max-workers=4
+gradle release --stacktrace
 ```
 
 #### --offline
 Use cached dependencies only:
 
 ```bash
-gradle buildRelease --offline
+gradle release --offline
 ```
 
 #### --refresh-dependencies
 Force refresh of dependencies:
 
 ```bash
-gradle buildRelease --refresh-dependencies
-```
-
-#### --continuous
-Watch for changes and rebuild:
-
-```bash
-gradle buildRelease --continuous
+gradle release --refresh-dependencies
 ```
 
 #### --dry-run
 Show what would be executed:
 
 ```bash
-gradle buildRelease --dry-run
+gradle release --dry-run
 ```
 
 ---
@@ -265,61 +177,26 @@ gradle buildRelease --dry-run
 ### Clean and Build
 
 ```bash
-gradle clean buildRelease
+gradle clean release
 ```
 
 ### Build with Debug
 
 ```bash
-gradle buildRelease --info --stacktrace
-```
-
-### Parallel Build All
-
-```bash
-gradle clean buildAllReleases --parallel --max-workers=4
-```
-
-### Verify and Build
-
-```bash
-gradle verifyBundle buildRelease -PbundleVersion=2.51.2
-```
-
----
-
-## Task Dependencies
-
-```
-buildRelease
-    ↓
-prepareBundle
-    ↓
-(downloads and prepares files)
-
-buildAllReleases
-    ↓
-(calls buildRelease for each version)
-
-verifyBundle
-    ↓
-(checks bundle structure)
+gradle release --info --stacktrace
 ```
 
 ---
 
 ## Quick Reference
 
-| Task | Purpose | Example |
-|------|---------|---------|
-| `buildRelease` | Build single version | `gradle buildRelease` |
-| `buildAllReleases` | Build all versions | `gradle buildAllReleases` |
-| `prepareBundle` | Prepare bundle | `gradle prepareBundle` |
-| `listVersions` | List versions | `gradle listVersions` |
-| `buildInfo` | Show config | `gradle buildInfo` |
-| `verifyBundle` | Verify structure | `gradle verifyBundle` |
-| `clean` | Clean build | `gradle clean` |
-| `tasks` | Show all tasks | `gradle tasks` |
+| Task           | Purpose          | Example                                |
+|----------------|------------------|----------------------------------------|
+| `release`      | Build version    | `gradle release -PbundleVersion=X.X.X` |
+| `listVersions` | List versions    | `gradle listVersions`                  |
+| `info`         | Show config      | `gradle info`                          |
+| `clean`        | Clean build      | `gradle clean`                         |
+| `tasks`        | Show all tasks   | `gradle tasks`                         |
 
 ---
 
@@ -329,16 +206,13 @@ verifyBundle
 
 ```bash
 # 1. Check configuration
-gradle buildInfo
+gradle info
 
 # 2. List versions
 gradle listVersions
 
-# 3. Verify bundle
-gradle verifyBundle
-
-# 4. Build
-gradle buildRelease
+# 3. Build
+gradle release -PbundleVersion=2.51.2
 ```
 
 ### Release
@@ -347,11 +221,11 @@ gradle buildRelease
 # 1. Clean
 gradle clean
 
-# 2. Build all
-gradle buildAllReleases --parallel
+# 2. Build specific version
+gradle release -PbundleVersion=2.51.2
 
 # 3. Verify outputs
-ls -lh build/
+ls -lh ../bearsampp-build/tools/git/2025.11.1/
 ```
 
 ### Debugging
@@ -361,10 +235,10 @@ ls -lh build/
 gradle clean
 
 # 2. Build with debug
-gradle buildRelease --debug --stacktrace
+gradle release --debug --stacktrace -PbundleVersion=2.51.2
 
 # 3. Check info
-gradle buildInfo --info
+gradle info --info
 ```
 
 ---
@@ -440,21 +314,27 @@ Version mappings:
 
 ### Build Directory
 ```
-../.tmp/
+bearsampp-build/
 ├── tmp/
-│   ├── src/              # Downloaded sources
-│   │   └── git2.51.2/
-│   └── prep/             # Prepared bundles
-│       └── git2.51.2/
-└── dist/                 # Final releases
-    └── bearsampp-git-2.51.2-2025.11.1.7z
+│   ├── downloads/git/    # Downloaded archives
+│   ├── extract/git/      # Extracted sources
+│   │   └── 2.51.2/
+│   └── bundles_prep/     # Prepared bundles
+│       └── tools/git/
+│           └── git2.51.2/
+└── tools/git/2025.11.1/  # Final releases
+    ├── bearsampp-git-2.51.2-2025.11.1.7z
+    ├── bearsampp-git-2.51.2-2025.11.1.7z.md5
+    ├── bearsampp-git-2.51.2-2025.11.1.7z.sha1
+    ├── bearsampp-git-2.51.2-2025.11.1.7z.sha256
+    └── bearsampp-git-2.51.2-2025.11.1.7z.sha512
 ```
 
 ### Cache Directory
 ```
 ~/.gradle/
 ├── caches/              # Build cache
-├── wrapper/             # Gradle
+├── wrapper/             # Gradle wrapper
 └── daemon/              # Gradle daemon
 ```
 
