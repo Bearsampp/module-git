@@ -5,6 +5,37 @@
 
 This is a module of [Bearsampp project](https://github.com/bearsampp/bearsampp) involving Git.
 
+## Building
+
+This project uses Gradle for building. See [.gradle-docs/](.gradle-docs/) for complete documentation.
+
+### Quick Start
+
+```bash
+# Show build information
+gradle info
+
+# List available versions
+gradle listVersions
+
+# Build a specific version (interactive)
+gradle release
+
+# Build a specific version (non-interactive)
+gradle release -PbundleVersion=2.51.2
+
+# Clean build artifacts
+gradle clean
+```
+
+### Documentation
+
+- **[Quick Start Guide](.gradle-docs/QUICKSTART.md)** - Get started in 5 minutes
+- **[Complete Guide](.gradle-docs/README.md)** - Full documentation
+- **[Migration Guide](.gradle-docs/MIGRATION.md)** - Migrating from Ant
+- **[API Reference](.gradle-docs/API.md)** - Detailed API documentation
+- **[Comparison](.gradle-docs/COMPARISON.md)** - Ant vs Gradle comparison
+
 ## Documentation and downloads
 
 https://bearsampp.com/module/git
