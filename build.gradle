@@ -47,9 +47,13 @@ ext {
     bundleTmpExtractPath = file("${buildTmpPath}/extract/${bundleName}").absolutePath
 }
 
-// Load releases properties
+// NOTE: Local releases.properties is deprecated for version resolution.
+//       As in the Bruno module, versions/URLs are sourced primarily from
+//       modules-untouched git.properties, with a constructed URL as fallback.
 ext.releasesProps = new Properties()
-file('releases.properties').withInputStream { ext.releasesProps.load(it) }
+if (file('releases.properties').exists()) {
+    file('releases.properties').withInputStream { ext.releasesProps.load(it) }
+}
 
 // Load untouched module versions from GitHub
 def loadRemoteGitProperties() {
@@ -70,8 +74,71 @@ def loadRemoteGitProperties() {
         return remoteProps
     } catch (Exception e) {
         println "  Warning: Could not load remote git.properties: ${e.message}"
-        return new Properties()
+        return null
     }
+}
+
+// Function to download from modules-untouched repository (primary source)
+def downloadFromModulesUntouched(String version, File destDir) {
+    println "Checking modules-untouched repository..."
+
+    def remoteProps = loadRemoteGitProperties()
+    def untouchedUrl = null
+
+    if (remoteProps) {
+        untouchedUrl = remoteProps.getProperty(version)
+        if (untouchedUrl) {
+            println "Found version ${version} in modules-untouched git.properties"
+            println "Downloading from:\n  ${untouchedUrl}"
+        } else {
+            println "Version ${version} not found in modules-untouched git.properties"
+            println "Attempting to construct URL based on standard format..."
+            untouchedUrl = "https://github.com/Bearsampp/modules-untouched/releases/download/git-${version}/git-${version}-win64.7z"
+            println "  ${untouchedUrl}"
+        }
+    } else {
+        println "Could not fetch git.properties, using standard URL format..."
+        untouchedUrl = "https://github.com/Bearsampp/modules-untouched/releases/download/git-${version}/git-${version}-win64.7z"
+        println "  ${untouchedUrl}"
+    }
+
+    // Determine filename from URL
+    def filename = untouchedUrl.substring(untouchedUrl.lastIndexOf('/') + 1)
+    def downloadDir = file(bundleTmpDownloadPath)
+    downloadDir.mkdirs()
+
+    def downloadedFile = file("${downloadDir}/${filename}")
+
+    if (!downloadedFile.exists()) {
+        println "  Downloading to: ${downloadedFile}"
+        try {
+            new URL(untouchedUrl).withInputStream { input ->
+                downloadedFile.withOutputStream { output ->
+                    def buffer = new byte[8192]
+                    int bytesRead
+                    while ((bytesRead = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, bytesRead)
+                    }
+                }
+            }
+            println "  Download complete from modules-untouched"
+        } catch (Exception e) {
+            throw new GradleException("""
+                Failed to download from modules-untouched: ${e.message}
+
+                Tried URL: ${untouchedUrl}
+
+                Please verify:
+                1. Version ${version} exists in modules-untouched repository
+                2. The URL is correct in git.properties or matches format: git-{version}/git-{version}-win64.7z
+                3. You have internet connectivity
+            """.stripIndent())
+        }
+    } else {
+        println "  Using cached file: ${downloadedFile}"
+    }
+
+    return downloadedFile
 }
 
 // Function to find 7-Zip executable
@@ -143,48 +210,17 @@ def getAvailableVersions() {
     return versions.unique().sort()
 }
 
-// Function to download and extract Git binaries
+// Function to download and extract Git binaries (remote-first like Bruno)
 def downloadAndExtractGit(String version, File destDir) {
-    def downloadUrl = releasesProps.getProperty(version)
-    if (!downloadUrl) {
-        // Check remote git.properties from modules-untouched
-        println "Version ${version} not found in releases.properties"
-        println "Checking remote git.properties from modules-untouched..."
-        
-        def remoteProps = loadRemoteGitProperties()
-        downloadUrl = remoteProps.getProperty(version)
-        
-        if (!downloadUrl) {
-            throw new GradleException("""
-                Version ${version} not found in releases.properties or remote git.properties.
-                
-                Please either:
-                1. Add the version to releases.properties with a download URL
-                2. Add the version to https://github.com/Bearsampp/modules-untouched/blob/main/modules/git.properties
-            """.stripIndent())
-        }
-    }
-
-    println "Downloading Git ${version} from:"
-    println "  ${downloadUrl}"
-
-    // Determine filename from URL
-    def filename = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1)
-    def downloadDir = file(bundleTmpDownloadPath)
+    // Always source versions/URLs from modules-untouched git.properties,
+    // falling back to the standard constructed URL when missing.
     def extractDir = file(bundleTmpExtractPath)
-    downloadDir.mkdirs()
     extractDir.mkdirs()
 
-    def downloadedFile = file("${downloadDir}/${filename}")
+    def downloadedFile = downloadFromModulesUntouched(version, destDir)
 
-    // Download if not already present
-    if (!downloadedFile.exists()) {
-        println "  Downloading to: ${downloadedFile}"
-        ant.get(src: downloadUrl, dest: downloadedFile, verbose: true)
-        println "  Download complete"
-    } else {
-        println "  Using cached file: ${downloadedFile}"
-    }
+    // Determine filename from downloaded file
+    def filename = downloadedFile.name
 
     // Extract the archive
     println "  Extracting archive..."
@@ -195,7 +231,9 @@ def downloadAndExtractGit(String version, File destDir) {
     extractPath.mkdirs()
 
     // Use 7zip or built-in extraction
-    if (filename.endsWith('.7z')) {
+    // Support both plain .7z archives and 7-Zip self-extracting archives (.7z.exe)
+    def lowerName = filename.toLowerCase()
+    if (lowerName.endsWith('.7z') || lowerName.endsWith('.7z.exe')) {
         def sevenZipPath = find7ZipExecutable()
         if (sevenZipPath) {
             println "  Using 7zip: ${sevenZipPath}"
@@ -212,7 +250,7 @@ def downloadAndExtractGit(String version, File destDir) {
                 .start()
 
             process.inputStream.eachLine { line ->
-                println "    ${line}"
+                if (line.trim()) println "    ${line}"
             }
 
             def exitCode = process.waitFor()
@@ -222,7 +260,7 @@ def downloadAndExtractGit(String version, File destDir) {
         } else {
             throw new GradleException("7-Zip not found. Please install 7-Zip or set 7Z_HOME environment variable.")
         }
-    } else if (filename.endsWith('.zip')) {
+    } else if (lowerName.endsWith('.zip')) {
         copy {
             from zipTree(downloadedFile)
             into extractPath
@@ -232,9 +270,47 @@ def downloadAndExtractGit(String version, File destDir) {
     }
 
     println "  Extraction complete"
-    println "  Git ${version} ready at: ${extractPath.absolutePath}"
+    println "  Git ${version} extracted to: ${extractPath.absolutePath}"
 
     return extractPath
+}
+
+// Try to locate the PortableGit root directory inside an extraction folder.
+// Heuristics:
+//  - A directory that contains either:
+//      usr/bin/git.exe OR mingw*/bin/git.exe OR cmd/git.exe OR git-bash.exe
+//  - Prefer a directory that has typical PortableGit structure: usr/, mingw*/ or cmd/
+def findGitDirectory(File extractPath) {
+    if (!extractPath?.exists()) return null
+
+    def isGitRoot = { File dir ->
+        def paths = [
+            new File(dir, 'usr/bin/git.exe'),
+            new File(dir, 'mingw64/bin/git.exe'),
+            new File(dir, 'mingw32/bin/git.exe'),
+            new File(dir, 'cmd/git.exe'),
+            new File(dir, 'bin/git.exe'),
+            new File(dir, 'git-bash.exe')
+        ]
+        return paths.any { it.exists() }
+    }
+
+    // 1) Check the extract root itself
+    if (isGitRoot(extractPath)) return extractPath
+
+    // 2) Breadth-first search subdirectories until we find a git root
+    def queue = new ArrayDeque<File>()
+    extractPath.listFiles()?.findAll { it.isDirectory() }?.each { queue.add(it) }
+
+    while (!queue.isEmpty()) {
+        def dir = queue.removeFirst()
+        if (isGitRoot(dir)) {
+            return dir
+        }
+        dir.listFiles()?.findAll { it.isDirectory() }?.each { queue.add(it) }
+    }
+
+    return null
 }
 
 // Helper function to generate hash files
@@ -398,14 +474,28 @@ tasks.register('release') {
         def bundleVersion = bundleFolder.replace(bundleName, '')
 
         // Download and extract Git binaries
-        def gitSrcDir = downloadAndExtractGit(bundleVersion, file(bundleTmpExtractPath))
+        def gitExtractRoot = downloadAndExtractGit(bundleVersion, file(bundleTmpExtractPath))
 
-        // Check if gitSrcDir contains a nested folder with the bundle name
-        def actualGitSrcDir = gitSrcDir
-        def nestedDir = new File(gitSrcDir, bundleFolder)
-        if (nestedDir.exists() && nestedDir.isDirectory()) {
-            actualGitSrcDir = nestedDir
-            println "Using nested directory: ${actualGitSrcDir.name}"
+        // Locate actual PortableGit root folder (where git.exe lives)
+        def actualGitSrcDir = findGitDirectory(gitExtractRoot)
+        if (actualGitSrcDir == null) {
+            // Fallback: if a single subdirectory exists, use it; else fail
+            def children = gitExtractRoot.listFiles()?.findAll { it.isDirectory() } ?: []
+            if (children.size() == 1) {
+                actualGitSrcDir = children[0]
+                println "Could not detect git root by markers; falling back to single folder: ${actualGitSrcDir.name}"
+            } else {
+                def listed = children.collect { "  - ${it.name}" }.join('\n')
+                throw new GradleException("""
+                    Could not locate Git root directory after extraction.
+                    Looked in: ${gitExtractRoot}
+                    Subdirectories:
+${listed}
+                    Expected to find usr/bin/git.exe, mingw*/bin/git.exe, cmd/git.exe or git-bash.exe
+                """.stripIndent())
+            }
+        } else {
+            println "Detected Git root: ${actualGitSrcDir.absolutePath}"
         }
 
         // Prepare output directory
@@ -415,12 +505,33 @@ tasks.register('release') {
         }
         gitPrepPath.mkdirs()
 
-        // Copy Git files from extracted source
-        println "Copying Git files..."
+        // Copy Git files from detected source directory
+        println "Copying Git files from ${actualGitSrcDir} ..."
         copy {
             from actualGitSrcDir
             into gitPrepPath
             exclude 'doc/**'
+        }
+
+        // Quick sanity check: ensure prep directory is not empty
+        def prepContents = (gitPrepPath.listFiles() ? gitPrepPath.listFiles().toList() : [])
+        if (prepContents.isEmpty()) {
+            println "[WARNING] Prep directory is empty after copy. Source was: ${actualGitSrcDir}"
+            // Try one more heuristic: if source contains a single directory, copy from it
+            def srcChildren = actualGitSrcDir.listFiles()?.findAll { it.isDirectory() } ?: []
+            if (srcChildren.size() == 1) {
+                println "Retrying copy from nested single directory: ${srcChildren[0].name}"
+                copy {
+                    from srcChildren[0]
+                    into gitPrepPath
+                    exclude 'doc/**'
+                }
+                prepContents = (gitPrepPath.listFiles() ? gitPrepPath.listFiles().toList() : [])
+            }
+        }
+
+        if (prepContents.isEmpty()) {
+            throw new GradleException("Prep directory is empty at ${gitPrepPath}. Copy step failed.")
         }
 
         // Copy bundle customizations
@@ -512,7 +623,8 @@ tasks.register('release') {
         println ""
         println "=".multiply(70)
         println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
-        println "Output directory: ${buildToolsPath}"
+        // Show the uncompressed directory (prep path), to mirror Bruno behavior request
+        println "Output directory: ${gitPrepPath}"
         println "Archive: ${destFile}.${bundleFormat}"
         println "=".multiply(70)
     }
