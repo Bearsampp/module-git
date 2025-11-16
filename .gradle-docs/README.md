@@ -153,6 +153,17 @@ The build:
 3. Generates hash files (MD5, SHA1, SHA256, SHA512)
 4. Names archive: `bearsampp-git-{version}-{release}.7z`
 
+Archive contents:
+- The archive root contains the version folder: `git{version}/`
+- Example structure:
+  ```
+  bearsampp-git-2.51.2-2025.11.1.7z
+  └── git2.51.2/
+      ├── bearsampp.conf
+      ├── repos.dat
+      └── ... (binaries and supporting files)
+  ```
+
 ## Version Management
 
 ### Adding a New Version
@@ -264,6 +275,17 @@ bearsampp-build/tools/git/2025.11.1/
 ├── bearsampp-git-2.51.2-2025.11.1.7z.sha1
 ├── bearsampp-git-2.51.2-2025.11.1.7z.sha256
 └── bearsampp-git-2.51.2-2025.11.1.7z.sha512
+```
+
+Verify archive structure (optional):
+```
+# Using 7-Zip on Windows (PowerShell)
+7z l bearsampp-build\tools\git\2025.11.1\bearsampp-git-2.51.2-2025.11.1.7z | Select-String "git2.51.2/"
+
+# Or extract and inspect
+7z x bearsampp-build\tools\git\2025.11.1\bearsampp-git-2.51.2-2025.11.1.7z -oC:\temp\inspect
+dir C:\temp\inspect
+# Expected: a top-level folder named git2.51.2
 ```
 
 ## Integration with Bearsampp
