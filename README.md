@@ -7,18 +7,21 @@ This is a module of [Bearsampp project](https://github.com/bearsampp/bearsampp) 
 
 ## Building
 
-This project uses Gradle for building. See [.gradle-docs/](.gradle-docs/) for complete documentation.
+This project uses Gradle for building. See [.gradle-docs/README.md](.gradle-docs/README.md) for complete documentation.
 
 ### Quick Start
 
 ```bash
-# Show build information
+# Display build information
 gradle info
+
+# List all available tasks
+gradle tasks
 
 # List available versions
 gradle listVersions
 
-# Build a specific version (interactive)
+# Build a release (interactive)
 gradle release
 
 # Build a specific version (non-interactive)
@@ -30,11 +33,7 @@ gradle clean
 
 ### Documentation
 
-- **[Quick Start Guide](.gradle-docs/QUICKSTART.md)** - Get started in 5 minutes
-- **[Complete Guide](.gradle-docs/README.md)** - Full documentation
-- **[Migration Guide](.gradle-docs/MIGRATION.md)** - Migrating from Ant
-- **[API Reference](.gradle-docs/API.md)** - Detailed API documentation
-- **[Comparison](.gradle-docs/COMPARISON.md)** - Ant vs Gradle comparison
+- **[Complete Guide](.gradle-docs/README.md)** - Full documentation including installation, configuration, and troubleshooting
 
 ## Documentation and downloads
 
