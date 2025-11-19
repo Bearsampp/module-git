@@ -19,3 +19,9 @@
 
 # Qodo
 /.qodo
+
+# Gradle
+.gradle/
+
+# Build artifacts
+build/

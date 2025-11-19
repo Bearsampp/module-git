@@ -1,0 +1,93 @@
+name: Gradle Build
+
+on:
+  push:
+    branches: [ main, gradle-convert ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: 8.5
+    
+    - name: Install 7-Zip
+      run: |
+        choco install 7zip -y
+        echo "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    
+    - name: Show build info
+      run: gradle buildInfo
+    
+    - name: List available versions
+      run: gradle listVersions
+    
+    - name: Verify bundle structure
+      run: gradle verifyBundle
+    
+    - name: Build release
+      run: gradle buildRelease
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: bearsampp-git-release
+        path: ../bearsampp-build/tools/git/**/*.7z
+        retention-days: 30
+    
+    - name: Display build output
+      run: |
+        Write-Host "Build completed successfully!"
+        Write-Host "Output files:"
+        Get-ChildItem ../bearsampp-build/tools/git/ -Recurse -Filter *.7z | ForEach-Object {
+          Write-Host "  - $($_.FullName) ($([math]::Round($_.Length / 1MB, 2)) MB)"
+        }
+
+  build-all:
+    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: 8.5
+    
+    - name: Install 7-Zip
+      run: |
+        choco install 7zip -y
+        echo "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    
+    - name: Build all releases
+      run: gradle buildAllReleases --parallel --max-workers=2
+    
+    - name: Upload all artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: bearsampp-git-all-releases
+        path: ../bearsampp-build/tools/git/**/*.7z
+        retention-days: 30
