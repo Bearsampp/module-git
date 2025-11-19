@@ -33,15 +33,15 @@ ext {
     def buildPathFromProps = buildProps.getProperty('build.path', '').trim()
     def buildPathFromEnv = System.getenv('BEARSAMPP_BUILD_PATH') ?: ''
     def defaultBuildPath = "${rootDir}/bearsampp-build"
-    
+
     buildBasePath = buildPathFromProps ?: (buildPathFromEnv ?: defaultBuildPath)
-    
+
     // Use shared bearsampp-build/tmp directory structure
     buildTmpPath = file("${buildBasePath}/tmp").absolutePath
     bundleTmpBuildPath = file("${buildTmpPath}/bundles_build/${bundleType}/${bundleName}").absolutePath
     bundleTmpPrepPath = file("${buildTmpPath}/bundles_prep/${bundleType}/${bundleName}").absolutePath
     bundleTmpSrcPath = file("${buildTmpPath}/bundles_src").absolutePath
-    
+
     // Download and extract paths
     bundleTmpDownloadPath = file("${buildTmpPath}/downloads/${bundleName}").absolutePath
     bundleTmpExtractPath = file("${buildTmpPath}/extract/${bundleName}").absolutePath
@@ -58,18 +58,18 @@ if (file('releases.properties').exists()) {
 // Load untouched module versions from GitHub
 def loadRemoteGitProperties() {
     def remoteUrl = "https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/git.properties"
-    
+
     try {
         println "Loading remote git.properties from modules-untouched..."
         def connection = new URL(remoteUrl).openConnection()
         connection.setConnectTimeout(10000)
         connection.setReadTimeout(10000)
-        
+
         def remoteProps = new Properties()
         connection.inputStream.withStream { stream ->
             remoteProps.load(stream)
         }
-        
+
         println "  Loaded ${remoteProps.size()} versions from remote git.properties"
         return remoteProps
     } catch (Exception e) {
@@ -187,7 +187,7 @@ def find7ZipExecutable() {
 // Helper function to get available versions
 def getAvailableVersions() {
     def versions = []
-    
+
     // Check bin directory
     def binDir = file("${projectDir}/bin")
     if (binDir.exists()) {
@@ -196,7 +196,7 @@ def getAvailableVersions() {
             ?.collect { it.name.replace(bundleName, '') } ?: []
         versions.addAll(binVersions)
     }
-    
+
     // Check bin/archived subdirectory
     def archivedDir = file("${projectDir}/bin/archived")
     if (archivedDir.exists()) {
@@ -205,7 +205,7 @@ def getAvailableVersions() {
             ?.collect { it.name.replace(bundleName, '') } ?: []
         versions.addAll(archivedVersions)
     }
-    
+
     // Remove duplicates and sort
     return versions.unique().sort()
 }
@@ -380,11 +380,11 @@ tasks.register('release') {
             println "=".multiply(70)
             println "Available ${bundleName} versions:"
             println "=".multiply(70)
-            
+
             // Show versions with location tags
             def binDir = file("${projectDir}/bin")
             def archivedDir = file("${projectDir}/bin/archived")
-            
+
             versions.eachWithIndex { version, index ->
                 def location = ""
                 if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
@@ -447,15 +447,15 @@ tasks.register('release') {
 
         // Check both bin/ and bin/archived/ directories
         def bundlePath = file("${projectDir}/bin/${bundleName}${versionToBuild}")
-        
+
         if (!bundlePath.exists()) {
             bundlePath = file("${projectDir}/bin/archived/${bundleName}${versionToBuild}")
         }
 
         if (!bundlePath.exists()) {
             def allVersions = getAvailableVersions()
-            def availableVersionsList = allVersions.collect { 
-                "  - ${it}" 
+            def availableVersionsList = allVersions.collect {
+                "  - ${it}"
             }.join('\n') ?: "  (none found)"
 
             throw new GradleException("""
@@ -549,6 +549,19 @@ ${listed}
         }
 
         println ""
+        println "Copying to bundles_build directory..."
+        def nonZipBuildPath = file("${bundleTmpBuildPath}/${bundleFolder}")
+        if (nonZipBuildPath.exists()) {
+            delete nonZipBuildPath
+        }
+        nonZipBuildPath.mkdirs()
+        copy {
+            from gitPrepPath
+            into nonZipBuildPath
+        }
+        println "Non-zip version available at: ${nonZipBuildPath}"
+
+        println ""
         println "Preparing archive..."
 
         // Determine build output path
@@ -628,8 +641,7 @@ ${listed}
         println ""
         println "=".multiply(70)
         println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
-        // Show the uncompressed directory (prep path), to mirror Bruno behavior request
-        println "Output directory: ${gitPrepPath}"
+        println "Output directory: ${nonZipBuildPath}"
         println "Archive: ${destFile}.${bundleFormat}"
         println "=".multiply(70)
     }
@@ -650,10 +662,10 @@ tasks.register('listVersions') {
 
         println "\nAvailable ${bundleName} versions:"
         println "-".multiply(60)
-        
+
         def binDir = file("${projectDir}/bin")
         def archivedDir = file("${projectDir}/bin/archived")
-        
+
         versions.each { version ->
             def location = ""
             if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
