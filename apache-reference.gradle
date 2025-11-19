@@ -1,0 +1,1356 @@
+/*
+ * Bearsampp Module Apache - Gradle Build
+ *
+ * Pure Gradle build configuration for Apache module packaging.
+ * This build script handles downloading, extracting, and packaging Apache binaries
+ * along with custom modules and configurations.
+ *
+ * Usage:
+ *   gradle tasks                              - List all available tasks
+ *   gradle info                               - Display build information
+ *   gradle release -PbundleVersion=2.4.62     - Build release for specific version
+ *   gradle clean                              - Clean build artifacts
+ *   gradle verify                             - Verify build environment
+ */
+
+plugins {
+    id 'base'
+}
+
+// Load build properties
+def buildProps = new Properties()
+file('build.properties').withInputStream { buildProps.load(it) }
+
+// Project information
+group = 'com.bearsampp.modules'
+version = buildProps.getProperty('bundle.release', '1.0.0')
+description = "Bearsampp Module - ${buildProps.getProperty('bundle.name', 'apache')}"
+
+// Define project paths
+ext {
+    projectBasedir = projectDir.absolutePath
+    rootDir = projectDir.parent
+    devPath = file("${rootDir}/dev").absolutePath
+    buildPropertiesFile = file('build.properties').absolutePath
+
+    // Bundle properties from build.properties
+    bundleName = buildProps.getProperty('bundle.name', 'apache')
+    bundleRelease = buildProps.getProperty('bundle.release', '1.0.0')
+    bundleType = buildProps.getProperty('bundle.type', 'bins')
+    bundleFormat = buildProps.getProperty('bundle.format', '7z')
+
+    // Build paths - with configurable base path
+    // Priority: 1) build.properties, 2) Environment variable, 3) Default
+    def buildPathFromProps = buildProps.getProperty('build.path', '').trim()
+    def buildPathFromEnv = System.getenv('BEARSAMPP_BUILD_PATH') ?: ''
+    def defaultBuildPath = "${rootDir}/bearsampp-build"
+    
+    buildBasePath = buildPathFromProps ?: (buildPathFromEnv ?: defaultBuildPath)
+    
+    // Use shared bearsampp-build/tmp directory structure (same as Ant builds)
+    buildTmpPath = file("${buildBasePath}/tmp").absolutePath
+    bundleTmpBuildPath = file("${buildTmpPath}/bundles_build/${bundleType}/${bundleName}").absolutePath
+    bundleTmpPrepPath = file("${buildTmpPath}/bundles_prep/${bundleType}/${bundleName}").absolutePath
+    bundleTmpSrcPath = file("${buildTmpPath}/bundles_src").absolutePath
+    
+    // Download and extract paths - use bearsampp-build/tmp instead of local build/
+    bundleTmpDownloadPath = file("${buildTmpPath}/downloads/${bundleName}").absolutePath
+    bundleTmpExtractPath = file("${buildTmpPath}/extract/${bundleName}").absolutePath
+}
+
+// Verify dev path exists
+if (!file(ext.devPath).exists()) {
+    throw new GradleException("Dev path not found: ${ext.devPath}. Please ensure the 'dev' project exists in ${ext.rootDir}")
+}
+
+// Configure repositories for dependencies
+repositories {
+    mavenCentral()
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+// Function to download from modules-untouched GitHub repository
+def downloadFromModulesUntouched(String version) {
+    println "Checking modules-untouched repository on GitHub..."
+    
+    // GitHub raw content URL for modules-untouched (using main branch)
+    def githubBaseUrl = "https://github.com/Bearsampp/modules-untouched/raw/main/apache${version}"
+    
+    // Try to detect the archive file by checking common patterns
+    def possibleArchives = [
+        "bearsampp-apache-${version}.7z",
+        "apache-${version}.7z",
+        "apache${version}.7z",
+        "bearsampp-apache-${version}.zip",
+        "apache-${version}.zip",
+        "apache${version}.zip"
+    ]
+    
+    def downloadDir = file(bundleTmpDownloadPath)
+    def extractDir = file(bundleTmpExtractPath)
+    downloadDir.mkdirs()
+    extractDir.mkdirs()
+    
+    def downloadedFile = null
+    def archiveUrl = null
+    
+    // Try to find which archive exists
+    for (archiveName in possibleArchives) {
+        def testUrl = "${githubBaseUrl}/${archiveName}"
+        println "  Checking: ${testUrl}"
+        
+        try {
+            // Test if URL exists by attempting a HEAD request
+            def connection = new URL(testUrl).openConnection()
+            connection.setRequestMethod("HEAD")
+            connection.setConnectTimeout(5000)
+            connection.setReadTimeout(5000)
+            
+            def responseCode = connection.getResponseCode()
+            if (responseCode == 200) {
+                archiveUrl = testUrl
+                downloadedFile = file("${downloadDir}/modules-untouched-${archiveName}")
+                println "  Found: ${archiveName}"
+                break
+            }
+        } catch (Exception e) {
+            // URL doesn't exist, try next
+        }
+    }
+    
+    if (!archiveUrl) {
+        println "  Apache ${version} not found in modules-untouched repository"
+        return null
+    }
+    
+    // Download the archive if not already cached
+    if (!downloadedFile.exists()) {
+        println "  Downloading from modules-untouched: ${archiveUrl}"
+        try {
+            ant.get(src: archiveUrl, dest: downloadedFile, verbose: true)
+            println "  Download complete"
+        } catch (Exception e) {
+            println "  Download failed: ${e.message}"
+            return null
+        }
+    } else {
+        println "  Using cached file: ${downloadedFile.name}"
+    }
+    
+    // Extract the archive
+    println "  Extracting archive..."
+    def extractPath = file("${extractDir}/modules-untouched-${version}")
+    if (extractPath.exists()) {
+        delete extractPath
+    }
+    extractPath.mkdirs()
+    
+    def filename = downloadedFile.name
+    
+    // Use 7zip or built-in extraction
+    if (filename.endsWith('.7z')) {
+        def sevenZipPath = find7ZipExecutable()
+        if (sevenZipPath) {
+            println "  Using 7zip: ${sevenZipPath}"
+            def command = [
+                sevenZipPath.toString(),
+                'x',
+                downloadedFile.absolutePath.toString(),
+                "-o${extractPath.absolutePath}".toString(),
+                '-y'
+            ]
+            def process = new ProcessBuilder(command as String[])
+                .directory(extractPath)
+                .redirectErrorStream(true)
+                .start()
+            
+            process.inputStream.eachLine { line ->
+                println "    ${line}"
+            }
+            
+            def exitCode = process.waitFor()
+            if (exitCode != 0) {
+                println "  7zip extraction failed"
+                return null
+            }
+        } else {
+            println "  7-Zip not found, cannot extract .7z file"
+            return null
+        }
+    } else if (filename.endsWith('.zip')) {
+        copy {
+            from zipTree(downloadedFile)
+            into extractPath
+        }
+    } else {
+        println "  Unsupported archive format: ${filename}"
+        return null
+    }
+    
+    println "  Extraction complete"
+    
+    // Find the Apache directory in the extracted files
+    def apacheDir = findApacheDirectory(extractPath)
+    if (!apacheDir) {
+        println "  Could not find Apache directory in extracted files"
+        return null
+    }
+    
+    println "  Found Apache directory: ${apacheDir.name}"
+    println "  Apache ${version} from modules-untouched ready at: ${apacheDir.absolutePath}"
+    
+    return apacheDir
+}
+
+// Function to load remote apache.properties from modules-untouched
+def loadRemoteApacheProperties() {
+    def remoteUrl = "https://raw.githubusercontent.com/Bearsampp/modules-untouched/main/modules/apache.properties"
+    
+    try {
+        println "Loading remote apache.properties from modules-untouched..."
+        def connection = new URL(remoteUrl).openConnection()
+        connection.setConnectTimeout(10000)
+        connection.setReadTimeout(10000)
+        
+        def remoteProps = new Properties()
+        connection.inputStream.withStream { stream ->
+            remoteProps.load(stream)
+        }
+        
+        println "  Loaded ${remoteProps.size()} versions from remote apache.properties"
+        return remoteProps
+    } catch (Exception e) {
+        println "  Warning: Could not load remote apache.properties: ${e.message}"
+        return new Properties()
+    }
+}
+
+// Function to download and extract Apache binaries
+def downloadAndExtractApache(String version, File destDir) {
+    // Load releases.properties to get download URL
+    def releasesFile = file('releases.properties')
+    if (!releasesFile.exists()) {
+        throw new GradleException("releases.properties not found")
+    }
+
+    def releases = new Properties()
+    releasesFile.withInputStream { releases.load(it) }
+
+    def downloadUrl = releases.getProperty(version)
+    if (!downloadUrl) {
+        // Check remote apache.properties from modules-untouched
+        println "Version ${version} not found in releases.properties"
+        println "Checking remote apache.properties from modules-untouched..."
+        
+        def remoteProps = loadRemoteApacheProperties()
+        downloadUrl = remoteProps.getProperty(version)
+        
+        if (downloadUrl) {
+            println "  Found version ${version} in remote apache.properties"
+            println "  URL: ${downloadUrl}"
+        } else {
+            // Check modules-untouched GitHub repository as fallback
+            println "Version ${version} not found in remote apache.properties"
+            
+            def untouchedDir = downloadFromModulesUntouched(version)
+            if (untouchedDir) {
+                println "Using Apache ${version} from modules-untouched repository"
+                return untouchedDir
+            }
+            
+            throw new GradleException("""
+                Version ${version} not found in releases.properties, remote apache.properties, or modules-untouched repository.
+                
+                Please either:
+                1. Add the version to releases.properties with a download URL
+                2. Add the version to https://github.com/Bearsampp/modules-untouched/blob/main/modules/apache.properties
+                3. Upload Apache binaries to: https://github.com/Bearsampp/modules-untouched/tree/main/apache${version}/
+            """.stripIndent())
+        }
+    }
+
+    println "Downloading Apache ${version} from:"
+    println "  ${downloadUrl}"
+
+    // Determine filename from URL
+    def filename = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1)
+    def downloadDir = file(bundleTmpDownloadPath)
+    def extractDir = file(bundleTmpExtractPath)
+    downloadDir.mkdirs()
+    extractDir.mkdirs()
+
+    def downloadedFile = file("${downloadDir}/${filename}")
+
+    // Download if not already present
+    if (!downloadedFile.exists()) {
+        println "  Downloading to: ${downloadedFile}"
+        ant.get(src: downloadUrl, dest: downloadedFile, verbose: true)
+        println "  Download complete"
+    } else {
+        println "  Using cached file: ${downloadedFile}"
+    }
+
+    // Extract the archive
+    println "  Extracting archive..."
+    def extractPath = file("${extractDir}/${version}")
+    if (extractPath.exists()) {
+        delete extractPath
+    }
+    extractPath.mkdirs()
+
+    // Use 7zip or built-in extraction
+    if (filename.endsWith('.7z')) {
+        // Try to use 7zip if available
+        def sevenZipPath = find7ZipExecutable()
+        if (sevenZipPath) {
+            println "  Using 7zip: ${sevenZipPath}"
+            def command = [
+                sevenZipPath.toString(),
+                'x',
+                downloadedFile.absolutePath.toString(),
+                "-o${extractPath.absolutePath}".toString(),
+                '-y'
+            ]
+            def process = new ProcessBuilder(command as String[])
+                .directory(extractPath)
+                .redirectErrorStream(true)
+                .start()
+
+            // Read output
+            process.inputStream.eachLine { line ->
+                println "    ${line}"
+            }
+
+            def exitCode = process.waitFor()
+            if (exitCode != 0) {
+                throw new GradleException("7zip extraction failed with exit code: ${exitCode}")
+            }
+        } else {
+            throw new GradleException("7-Zip not found. Please install 7-Zip or extract manually.")
+        }
+    } else if (filename.endsWith('.zip')) {
+        copy {
+            from zipTree(downloadedFile)
+            into extractPath
+        }
+    } else {
+        throw new GradleException("Unsupported archive format: ${filename}")
+    }
+
+    println "  Extraction complete"
+
+    // Find the Apache directory in the extracted files
+    def apacheDir = findApacheDirectory(extractPath)
+    if (!apacheDir) {
+        throw new GradleException("Could not find Apache directory in extracted files")
+    }
+
+    println "  Found Apache directory: ${apacheDir.name}"
+    println "  Apache ${version} ready at: ${apacheDir.absolutePath}"
+
+    return apacheDir
+}
+
+// Function to find 7-Zip executable
+def find7ZipExecutable() {
+    // Check environment variable
+    def sevenZipHome = System.getenv('7Z_HOME')
+    if (sevenZipHome) {
+        def exe = file("${sevenZipHome}/7z.exe")
+        if (exe.exists()) {
+            return exe.absolutePath
+        }
+    }
+
+    // Check common installation paths
+    def commonPaths = [
+        'C:/Program Files/7-Zip/7z.exe',
+        'C:/Program Files (x86)/7-Zip/7z.exe',
+        'D:/Program Files/7-Zip/7z.exe',
+        'D:/Program Files (x86)/7-Zip/7z.exe'
+    ]
+
+    for (path in commonPaths) {
+        def exe = file(path)
+        if (exe.exists()) {
+            return exe.absolutePath
+        }
+    }
+
+    // Try to find in PATH
+    try {
+        def process = ['where', '7z.exe'].execute()
+        process.waitFor()
+        if (process.exitValue() == 0) {
+            def output = process.text.trim()
+            if (output) {
+                return output.split('\n')[0].trim()
+            }
+        }
+    } catch (Exception e) {
+        // Ignore
+    }
+
+    return null
+}
+
+// Function to find Apache directory in extracted files
+def findApacheDirectory(File extractPath) {
+    // Look for Apache directory (case-insensitive, various formats)
+    def apacheDirs = extractPath.listFiles()?.findAll {
+        it.isDirectory() && (
+            it.name == 'Apache24' ||
+            it.name == 'Apache2.4' ||
+            it.name.toLowerCase().startsWith('apache')
+        )
+    }
+
+    if (apacheDirs && !apacheDirs.isEmpty()) {
+        // Prefer Apache24 or Apache2.4 if they exist
+        def preferred = apacheDirs.find { it.name == 'Apache24' || it.name == 'Apache2.4' }
+        return preferred ?: apacheDirs[0]
+    }
+
+    // If not found at top level, search one level deep
+    def foundDir = null
+    extractPath.listFiles()?.each { dir ->
+        if (dir.isDirectory() && !foundDir) {
+            def subDirs = dir.listFiles()?.findAll {
+                it.isDirectory() && (
+                    it.name == 'Apache24' ||
+                    it.name == 'Apache2.4' ||
+                    it.name.toLowerCase().startsWith('apache')
+                )
+            }
+            if (subDirs && !subDirs.isEmpty()) {
+                foundDir = subDirs[0]
+            }
+        }
+    }
+
+    return foundDir
+}
+
+// Helper function to get available versions
+def getAvailableVersions() {
+    def versions = []
+    
+    // Check bin directory
+    def binDir = file("${projectDir}/bin")
+    if (binDir.exists()) {
+        def binVersions = binDir.listFiles()
+            ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) && it.name != 'archived' }
+            ?.collect { it.name.replace(bundleName, '') } ?: []
+        versions.addAll(binVersions)
+    }
+    
+    // Check bin/archived subdirectory
+    def archivedDir = file("${projectDir}/bin/archived")
+    if (archivedDir.exists()) {
+        def archivedVersions = archivedDir.listFiles()
+            ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) }
+            ?.collect { it.name.replace(bundleName, '') } ?: []
+        versions.addAll(archivedVersions)
+    }
+    
+    // Remove duplicates and sort
+    return versions.unique().sort()
+}
+
+// ============================================================================
+// GRADLE NATIVE TASKS
+// ============================================================================
+
+// Task: Display build information
+tasks.register('info') {
+    group = 'help'
+    description = 'Display build configuration information'
+
+    // Capture values at configuration time to avoid deprecation warnings
+    def projectName = project.name
+    def projectVersion = project.version
+    def projectDescription = project.description
+    def projectBasedirValue = projectBasedir
+    def rootDirValue = rootDir
+    def devPathValue = devPath
+    def bundleNameValue = bundleName
+    def bundleReleaseValue = bundleRelease
+    def bundleTypeValue = bundleType
+    def bundleFormatValue = bundleFormat
+    def buildBasePathValue = buildBasePath
+    def buildTmpPathValue = buildTmpPath
+    def bundleTmpPrepPathValue = bundleTmpPrepPath
+    def bundleTmpBuildPathValue = bundleTmpBuildPath
+    def bundleTmpSrcPathValue = bundleTmpSrcPath
+    def bundleTmpDownloadPathValue = bundleTmpDownloadPath
+    def bundleTmpExtractPathValue = bundleTmpExtractPath
+    def javaVersion = JavaVersion.current()
+    def javaHome = System.getProperty('java.home')
+    def gradleVersion = gradle.gradleVersion
+    def gradleHome = gradle.gradleHomeDir
+
+    doLast {
+        println """
+        ================================================================
+                  Bearsampp Module Apache - Build Info
+        ================================================================
+
+        Project:        ${projectName}
+        Version:        ${projectVersion}
+        Description:    ${projectDescription}
+
+        Bundle Properties:
+          Name:         ${bundleNameValue}
+          Release:      ${bundleReleaseValue}
+          Type:         ${bundleTypeValue}
+          Format:       ${bundleFormatValue}
+
+        Paths:
+          Project Dir:  ${projectBasedirValue}
+          Root Dir:     ${rootDirValue}
+          Dev Path:     ${devPathValue}
+          Build Base:   ${buildBasePathValue}
+          Build Tmp:    ${buildTmpPathValue}
+          Tmp Prep:     ${bundleTmpPrepPathValue}
+          Tmp Build:    ${bundleTmpBuildPathValue}
+          Tmp Src:      ${bundleTmpSrcPathValue}
+          Tmp Download: ${bundleTmpDownloadPathValue}
+          Tmp Extract:  ${bundleTmpExtractPathValue}
+
+        Java:
+          Version:      ${javaVersion}
+          Home:         ${javaHome}
+
+        Gradle:
+          Version:      ${gradleVersion}
+          Home:         ${gradleHome}
+
+        Available Task Groups:
+          * build        - Build and package tasks
+          * help         - Help and information tasks
+          * verification - Verification tasks
+
+        Quick Start:
+          gradle tasks                            - List all available tasks
+          gradle info                             - Show this information
+          gradle listVersions                     - List available versions
+          gradle release -PbundleVersion=2.4.62   - Build release for version
+          gradle releaseAll                       - Build all available versions
+          gradle clean                            - Clean build artifacts
+          gradle verify                           - Verify build environment
+        """.stripIndent()
+    }
+}
+
+// Task: Main release task
+tasks.register('release') {
+    group = 'build'
+    description = 'Build release package (use -PbundleVersion=X.X.X to specify version)'
+
+    // Capture property at configuration time to avoid deprecation warning
+    def bundleVersionProperty = project.findProperty('bundleVersion')
+
+    doLast {
+        def versionToBuild = bundleVersionProperty
+
+        // Interactive mode if no version specified
+        if (!versionToBuild) {
+            def versions = getAvailableVersions()
+
+            if (versions.isEmpty()) {
+                throw new GradleException("No versions found in bin/ or bin/archived/ directories")
+            }
+
+            println ""
+            println "=".multiply(70)
+            println "Available ${bundleName} versions:"
+            println "=".multiply(70)
+            
+            // Show versions with location tags
+            def binDir = file("${projectDir}/bin")
+            def archivedDir = file("${projectDir}/bin/archived")
+            
+            versions.eachWithIndex { version, index ->
+                def location = ""
+                if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
+                    location = "[bin]"
+                } else if (archivedDir.exists() && file("${archivedDir}/${bundleName}${version}").exists()) {
+                    location = "[bin/archived]"
+                }
+                println "  ${(index + 1).toString().padLeft(2)}. ${version.padRight(15)} ${location}"
+            }
+            println "=".multiply(70)
+            println ""
+            println "Enter version number or full version string: "
+            println ""
+
+            // Read input using Gradle's standard input
+            def input = null
+            try {
+                def reader = new BufferedReader(new InputStreamReader(System.in))
+                input = reader.readLine()
+            } catch (Exception e) {
+                throw new GradleException("""
+                    Failed to read input. Please use non-interactive mode:
+                      gradle release -PbundleVersion=X.X.X
+
+                    Available versions: ${versions.join(', ')}
+                """.stripIndent())
+            }
+
+            if (!input || input.trim().isEmpty()) {
+                throw new GradleException("""
+                    No version selected. Please use non-interactive mode:
+                      gradle release -PbundleVersion=X.X.X
+
+                    Available versions: ${versions.join(', ')}
+                """.stripIndent())
+            }
+
+            input = input.trim()
+
+            // Check if input is a number (index selection)
+            if (input.isInteger()) {
+                def index = input.toInteger() - 1
+                if (index >= 0 && index < versions.size()) {
+                    versionToBuild = versions[index]
+                } else {
+                    throw new GradleException("Invalid selection: ${input}. Please choose 1-${versions.size()}")
+                }
+            } else {
+                // Direct version string
+                versionToBuild = input
+            }
+
+            println ""
+            println "Selected version: ${versionToBuild}"
+        }
+
+        println "=".multiply(70)
+        println "Building release for ${bundleName} version ${versionToBuild}..."
+        println "=".multiply(70)
+
+        // Check both bin/ and bin/archived/ directories
+        def bundlePath = file("${projectDir}/bin/${bundleName}${versionToBuild}")
+        
+        if (!bundlePath.exists()) {
+            bundlePath = file("${projectDir}/bin/archived/${bundleName}${versionToBuild}")
+        }
+
+        if (!bundlePath.exists()) {
+            def allVersions = getAvailableVersions()
+            def availableVersionsList = allVersions.collect { 
+                "  - ${it}" 
+            }.join('\n') ?: "  (none found)"
+
+            throw new GradleException("""
+                Bundle version not found: ${bundleName}${versionToBuild}
+
+                Available versions:
+                ${availableVersionsList}
+            """.stripIndent())
+        }
+
+        println "Bundle path: ${bundlePath}"
+        println ""
+
+        // Get the untouched module source
+        def bundleFolder = bundlePath.name
+        def bundleVersion = bundleFolder.replace(bundleName, '')
+
+        // Determine source paths - check bin directory first, then build directory
+        def bundleSrcDest = bundlePath
+        def bundleSrcFinal = null
+
+        if (file("${bundleSrcDest}/Apache24").exists()) {
+            bundleSrcFinal = file("${bundleSrcDest}/Apache24")
+        } else if (file("${bundleSrcDest}/Apache2.4").exists()) {
+            bundleSrcFinal = file("${bundleSrcDest}/Apache2.4")
+        } else {
+            // Apache binaries not found in bin/ - check modules-untouched repository first
+            println ""
+            println "Apache binaries not found in bin/ directory"
+            
+            // Check modules-untouched GitHub repository
+            def untouchedDir = downloadFromModulesUntouched(bundleVersion)
+            if (untouchedDir) {
+                println "Using Apache ${bundleVersion} from modules-untouched repository"
+                bundleSrcFinal = untouchedDir
+            } else {
+                // Check if already downloaded to tmp extract path
+                def tmpExtractPath = file("${bundleTmpExtractPath}/${bundleVersion}")
+                def tmpApacheDir = findApacheDirectory(tmpExtractPath)
+
+                if (tmpApacheDir && tmpApacheDir.exists()) {
+                    println "Using cached Apache binaries from tmp extract directory"
+                    bundleSrcFinal = tmpApacheDir
+                } else {
+                    // Download and extract to tmp directory
+                    println "Downloading Apache ${bundleVersion}..."
+                    println ""
+
+                    try {
+                        // Download and extract to tmp directory (or use modules-untouched as fallback)
+                        bundleSrcFinal = downloadAndExtractApache(bundleVersion, file(bundleTmpExtractPath))
+                    } catch (Exception e) {
+                        throw new GradleException("""
+                            Failed to obtain Apache binaries: ${e.message}
+
+                            You can manually:
+                            1. Download and extract Apache binaries to: ${bundleSrcDest}/Apache24/
+                            2. Add version ${bundleVersion} to releases.properties with a download URL
+                            3. Upload Apache binaries to: https://github.com/Bearsampp/modules-untouched/tree/main/apache${bundleVersion}/
+                        """.stripIndent())
+                    }
+                }
+            }
+        }
+
+        def httpdExe = file("${bundleSrcFinal}/bin/httpd.exe")
+        if (!httpdExe.exists()) {
+            throw new GradleException("httpd.exe not found at ${httpdExe}")
+        }
+
+        println "Source folder: ${bundleSrcFinal}"
+        println ""
+
+        // Prepare output directory
+        def apachePrepPath = file("${bundleTmpPrepPath}/${bundleName}${bundleVersion}")
+        if (apachePrepPath.exists()) {
+            delete apachePrepPath
+        }
+        apachePrepPath.mkdirs()
+
+        // Copy readme if exists
+        def readmeFile = file("${bundleSrcDest}/readme_first.html")
+        if (readmeFile.exists()) {
+            copy {
+                from readmeFile
+                into apachePrepPath
+            }
+        }
+
+        // Copy Apache files (excluding certain directories)
+        println "Copying Apache files..."
+        copy {
+            from bundleSrcFinal
+            into apachePrepPath
+            exclude 'cgi-bin/**'
+            exclude 'conf/original/**'
+            exclude 'conf/ssl/**'
+            exclude 'error/**'
+            exclude 'htdocs/**'
+            exclude 'icons/**'
+            exclude 'include/**'
+            exclude 'lib/**'
+            exclude 'logs/*'
+            exclude 'tools/**'
+        }
+
+        // Copy bundle customizations
+        println "Copying bundle customizations..."
+        copy {
+            from bundlePath
+            into apachePrepPath
+            exclude 'Apache24/**'
+            exclude 'Apache2.4/**'
+            exclude 'readme_first.html'
+        }
+
+        // Process modules if modules.properties exists
+        def modulesFile = file("${apachePrepPath}/modules.properties")
+        if (modulesFile.exists()) {
+            println ""
+            println "Processing modules..."
+
+            def modules = new Properties()
+            modulesFile.withInputStream { modules.load(it) }
+
+            def modulesContent = new StringBuilder()
+
+            modules.each { moduleName, moduleUrl ->
+                println "  Processing module: ${moduleName}"
+
+                // Extract version from URL (if present)
+                def versionMatch = (moduleUrl =~ /apache-.*-.*-(.*)/)
+                def moduleVersion = versionMatch ? versionMatch[0][1] : 'unknown'
+
+                // Download module (simulated - in real implementation would download)
+                // For now, we'll just document what would happen
+                println "    URL: ${moduleUrl}"
+                println "    Version: ${moduleVersion}"
+
+                // Add to modules content for httpd.conf injection
+                modulesContent.append("#LoadModule ${moduleName}_module modules/mod_${moduleName}.so\n")
+            }
+
+            // Inject modules into httpd.conf
+            def httpdConf = file("${bundlePath}/conf/httpd.conf")
+            def httpdConfBer = file("${bundlePath}/conf/httpd.conf.ber")
+
+            if (httpdConf.exists()) {
+                println ""
+                println "Injecting modules into httpd.conf..."
+                def confContent = httpdConf.text.replace('@APACHE_MODULES@', modulesContent.toString())
+                file("${apachePrepPath}/conf/httpd.conf").text = confContent
+            }
+
+            if (httpdConfBer.exists()) {
+                println "Injecting modules into httpd.conf.ber..."
+                def confContent = httpdConfBer.text.replace('@APACHE_MODULES@', modulesContent.toString())
+                file("${apachePrepPath}/conf/httpd.conf.ber").text = confContent
+            }
+
+            // Remove modules.properties from output
+            modulesFile.delete()
+        }
+
+        println ""
+        println "Preparing archive..."
+
+        // Determine build output path following Bruno pattern
+        // bearsampp-build/{bundleType}/{bundleName}/{bundleRelease}
+        def buildPath = file(buildBasePath)
+        def buildBinsPath = file("${buildPath}/${bundleType}/${bundleName}/${bundleRelease}")
+        buildBinsPath.mkdirs()
+
+        // Build archive filename
+        def destFile = file("${buildBinsPath}/bearsampp-${bundleName}-${bundleVersion}-${bundleRelease}")
+
+        // Compress based on format
+        if (bundleFormat == '7z') {
+            // 7z format
+            def archiveFile = file("${destFile}.7z")
+            if (archiveFile.exists()) {
+                delete archiveFile
+            }
+
+            println "Compressing ${bundleName}${bundleVersion} to ${archiveFile.name}..."
+
+            // Find 7z executable
+            def sevenZipExe = find7ZipExecutable()
+            if (!sevenZipExe) {
+                throw new GradleException("7-Zip not found. Please install 7-Zip or set 7Z_HOME environment variable.")
+            }
+
+            println "Using 7-Zip: ${sevenZipExe}"
+
+            // Create 7z archive
+            def command = [
+                sevenZipExe,
+                'a',
+                '-t7z',
+                archiveFile.absolutePath.toString(),
+                '.'
+            ]
+
+            def process = new ProcessBuilder(command as String[])
+                .directory(apachePrepPath)
+                .redirectErrorStream(true)
+                .start()
+
+            process.inputStream.eachLine { line ->
+                if (line.trim()) println "  ${line}"
+            }
+
+            def exitCode = process.waitFor()
+            if (exitCode != 0) {
+                throw new GradleException("7zip compression failed with exit code: ${exitCode}")
+            }
+
+            println "Archive created: ${archiveFile}"
+
+            // Generate hash files
+            println "Generating hash files..."
+            generateHashFiles(archiveFile)
+
+        } else {
+            // ZIP format
+            def archiveFile = file("${destFile}.zip")
+            if (archiveFile.exists()) {
+                delete archiveFile
+            }
+
+            println "Compressing ${bundleName}${bundleVersion} to ${archiveFile.name}..."
+
+            ant.zip(destfile: archiveFile, basedir: apachePrepPath)
+
+            println "Archive created: ${archiveFile}"
+
+            // Generate hash files
+            println "Generating hash files..."
+            generateHashFiles(archiveFile)
+        }
+
+        println ""
+        println "=".multiply(70)
+        println "[SUCCESS] Release build completed successfully for version ${versionToBuild}"
+        println "Output directory: ${buildBinsPath}"
+        println "Archive: ${destFile}.${bundleFormat}"
+        println "=".multiply(70)
+    }
+}
+
+// Helper function to generate hash files
+def generateHashFiles(File file) {
+    if (!file.exists()) {
+        throw new GradleException("File not found for hashing: ${file}")
+    }
+
+    // Generate MD5
+    def md5File = new File("${file.absolutePath}.md5")
+    def md5Hash = calculateHash(file, 'MD5')
+    md5File.text = "${md5Hash} ${file.name}\n"
+    println "  Created: ${md5File.name}"
+
+    // Generate SHA1
+    def sha1File = new File("${file.absolutePath}.sha1")
+    def sha1Hash = calculateHash(file, 'SHA-1')
+    sha1File.text = "${sha1Hash} ${file.name}\n"
+    println "  Created: ${sha1File.name}"
+
+    // Generate SHA256
+    def sha256File = new File("${file.absolutePath}.sha256")
+    def sha256Hash = calculateHash(file, 'SHA-256')
+    sha256File.text = "${sha256Hash} ${file.name}\n"
+    println "  Created: ${sha256File.name}"
+
+    // Generate SHA512
+    def sha512File = new File("${file.absolutePath}.sha512")
+    def sha512Hash = calculateHash(file, 'SHA-512')
+    sha512File.text = "${sha512Hash} ${file.name}\n"
+    println "  Created: ${sha512File.name}"
+}
+
+// Helper function to calculate hash
+def calculateHash(File file, String algorithm) {
+    def digest = java.security.MessageDigest.getInstance(algorithm)
+    file.withInputStream { stream ->
+        def buffer = new byte[8192]
+        def bytesRead
+        while ((bytesRead = stream.read(buffer)) != -1) {
+            digest.update(buffer, 0, bytesRead)
+        }
+    }
+    return digest.digest().collect { String.format('%02x', it) }.join('')
+}
+
+// Task: Build all available versions
+tasks.register('releaseAll') {
+    group = 'build'
+    description = 'Build release packages for all available versions in bin/ directory'
+
+    doLast {
+        def binDir = file("${projectDir}/bin")
+        if (!binDir.exists()) {
+            throw new GradleException("bin/ directory not found")
+        }
+
+        def versions = getAvailableVersions()
+
+        if (versions.isEmpty()) {
+            throw new GradleException("No versions found in bin/ directory")
+        }
+
+        println ""
+        println "=".multiply(70)
+        println "Building releases for ${versions.size()} ${bundleName} versions"
+        println "=".multiply(70)
+        println ""
+
+        def successCount = 0
+        def failedVersions = []
+
+        versions.each { version ->
+            println "=".multiply(70)
+            println "[${successCount + 1}/${versions.size()}] Building ${bundleName} ${version}..."
+            println "=".multiply(70)
+
+            try {
+                // Call the release task logic for this version
+                def bundlePath = file("${projectDir}/bin/${bundleName}${version}")
+
+                if (!bundlePath.exists()) {
+                    bundlePath = file("${projectDir}/bin/archived/${bundleName}${version}")
+                }
+
+                if (!bundlePath.exists()) {
+                    throw new GradleException("Bundle path not found: ${bundlePath}")
+                }
+
+                println "Bundle path: ${bundlePath}"
+                println ""
+
+                // Get the untouched module source
+                def bundleFolder = bundlePath.name
+                def bundleVersion = bundleFolder.replace(bundleName, '')
+
+                // Determine source paths
+                def bundleSrcDest = bundlePath
+                def bundleSrcFinal = null
+
+                if (file("${bundleSrcDest}/Apache24").exists()) {
+                    bundleSrcFinal = file("${bundleSrcDest}/Apache24")
+                } else if (file("${bundleSrcDest}/Apache2.4").exists()) {
+                    bundleSrcFinal = file("${bundleSrcDest}/Apache2.4")
+                } else {
+                    throw new GradleException("Main folder not found in ${bundleSrcDest}")
+                }
+
+                def httpdExe = file("${bundleSrcFinal}/bin/httpd.exe")
+                if (!httpdExe.exists()) {
+                    throw new GradleException("httpd.exe not found at ${httpdExe}")
+                }
+
+                println "Source folder: ${bundleSrcFinal}"
+                println ""
+
+                // Prepare output directory
+                def apachePrepPath = file("${bundleTmpPrepPath}/${bundleName}${bundleVersion}")
+                if (apachePrepPath.exists()) {
+                    delete apachePrepPath
+                }
+                apachePrepPath.mkdirs()
+
+                // Copy readme if exists
+                def readmeFile = file("${bundleSrcDest}/readme_first.html")
+                if (readmeFile.exists()) {
+                    copy {
+                        from readmeFile
+                        into apachePrepPath
+                    }
+                }
+
+                // Copy Apache files (excluding certain directories)
+                println "Copying Apache files..."
+                copy {
+                    from bundleSrcFinal
+                    into apachePrepPath
+                    exclude 'cgi-bin/**'
+                    exclude 'conf/original/**'
+                    exclude 'conf/ssl/**'
+                    exclude 'error/**'
+                    exclude 'htdocs/**'
+                    exclude 'icons/**'
+                    exclude 'include/**'
+                    exclude 'lib/**'
+                    exclude 'logs/*'
+                    exclude 'tools/**'
+                }
+
+                // Copy bundle customizations
+                println "Copying bundle customizations..."
+                copy {
+                    from bundlePath
+                    into apachePrepPath
+                    exclude 'Apache24/**'
+                    exclude 'Apache2.4/**'
+                    exclude 'readme_first.html'
+                }
+
+                // Process modules if modules.properties exists
+                def modulesFile = file("${apachePrepPath}/modules.properties")
+                if (modulesFile.exists()) {
+                    println ""
+                    println "Processing modules..."
+
+                    def modules = new Properties()
+                    modulesFile.withInputStream { modules.load(it) }
+
+                    def modulesContent = new StringBuilder()
+
+                    modules.each { moduleName, moduleUrl ->
+                        println "  Processing module: ${moduleName}"
+
+                        // Extract version from URL (if present)
+                        def versionMatch = (moduleUrl =~ /apache-.*-.*-(.*)/)
+                        def moduleVersion = versionMatch ? versionMatch[0][1] : 'unknown'
+
+                        println "    URL: ${moduleUrl}"
+                        println "    Version: ${moduleVersion}"
+
+                        // Add to modules content for httpd.conf injection
+                        modulesContent.append("#LoadModule ${moduleName}_module modules/mod_${moduleName}.so\n")
+                    }
+
+                    // Inject modules into httpd.conf
+                    def httpdConf = file("${bundlePath}/conf/httpd.conf")
+                    def httpdConfBer = file("${bundlePath}/conf/httpd.conf.ber")
+
+                    if (httpdConf.exists()) {
+                        println ""
+                        println "Injecting modules into httpd.conf..."
+                        def confContent = httpdConf.text.replace('@APACHE_MODULES@', modulesContent.toString())
+                        file("${apachePrepPath}/conf/httpd.conf").text = confContent
+                    }
+
+                    if (httpdConfBer.exists()) {
+                        println "Injecting modules into httpd.conf.ber..."
+                        def confContent = httpdConfBer.text.replace('@APACHE_MODULES@', modulesContent.toString())
+                        file("${apachePrepPath}/conf/httpd.conf.ber").text = confContent
+                    }
+
+                    // Remove modules.properties from output
+                    modulesFile.delete()
+                }
+
+                println ""
+                println "[SUCCESS] ${bundleName} ${version} completed"
+                println "Output: ${apachePrepPath}"
+                successCount++
+
+            } catch (Exception e) {
+                println ""
+                println "[FAILED] ${bundleName} ${version}: ${e.message}"
+                failedVersions.add(version)
+            }
+
+            println ""
+        }
+
+        // Summary
+        println "=".multiply(70)
+        println "Build Summary"
+        println "=".multiply(70)
+        println "Total versions: ${versions.size()}"
+        println "Successful:     ${successCount}"
+        println "Failed:         ${failedVersions.size()}"
+
+        if (!failedVersions.isEmpty()) {
+            println ""
+            println "Failed versions:"
+            failedVersions.each { v ->
+                println "  - ${v}"
+            }
+        }
+
+        println "=".multiply(70)
+
+        if (failedVersions.isEmpty()) {
+            println "[SUCCESS] All versions built successfully!"
+        } else {
+            throw new GradleException("${failedVersions.size()} version(s) failed to build")
+        }
+    }
+}
+
+// Task: Enhanced clean task
+tasks.named('clean') {
+    group = 'build'
+    description = 'Clean build artifacts and temporary files'
+
+    doLast {
+        // Clean Gradle build directory
+        def buildDir = file("${projectDir}/build")
+        if (buildDir.exists()) {
+            delete buildDir
+        }
+
+        println "[SUCCESS] Build artifacts cleaned"
+    }
+}
+
+// Task: Verify build environment
+tasks.register('verify') {
+    group = 'verification'
+    description = 'Verify build environment and dependencies'
+
+    doLast {
+        println "Verifying build environment for module-apache..."
+
+        def checks = [:]
+
+        // Check Java version
+        def javaVersion = JavaVersion.current()
+        checks['Java 8+'] = javaVersion >= JavaVersion.VERSION_1_8
+
+        // Check required files
+        checks['build.properties'] = file('build.properties').exists()
+        checks['releases.properties'] = file('releases.properties').exists()
+
+        // Check dev directory
+        checks['dev directory'] = file(devPath).exists()
+
+        // Check bin directory
+        checks['bin directory'] = file("${projectDir}/bin").exists()
+
+        // Check 7-Zip if format is 7z
+        if (bundleFormat == '7z') {
+            checks['7-Zip'] = find7ZipExecutable() != null
+        }
+
+        println "\nEnvironment Check Results:"
+        println "-".multiply(60)
+        checks.each { name, passed ->
+            def status = passed ? "[PASS]" : "[FAIL]"
+            println "  ${status.padRight(10)} ${name}"
+        }
+        println "-".multiply(60)
+
+        def allPassed = checks.values().every { it }
+        if (allPassed) {
+            println "\n[SUCCESS] All checks passed! Build environment is ready."
+            println "\nYou can now run:"
+            println "  gradle release -PbundleVersion=2.4.62   - Build release for version"
+            println "  gradle listVersions                     - List available versions"
+        } else {
+            println "\n[WARNING] Some checks failed. Please review the requirements."
+            throw new GradleException("Build environment verification failed")
+        }
+    }
+}
+
+// Task: List all bundle versions from releases.properties
+tasks.register('listReleases') {
+    group = 'help'
+    description = 'List all available releases from releases.properties'
+
+    doLast {
+        def releasesFile = file('releases.properties')
+        if (!releasesFile.exists()) {
+            println "releases.properties not found"
+            return
+        }
+
+        def releases = new Properties()
+        releasesFile.withInputStream { releases.load(it) }
+
+        println "\nAvailable Apache Releases:"
+        println "-".multiply(80)
+        releases.sort { it.key }.each { version, url ->
+            println "  ${version.padRight(10)} -> ${url}"
+        }
+        println "-".multiply(80)
+        println "Total releases: ${releases.size()}"
+    }
+}
+
+// Task: List available bundle versions in bin and bin/archived directories
+tasks.register('listVersions') {
+    group = 'help'
+    description = 'List all available bundle versions in bin/ and bin/archived/ directories'
+
+    doLast {
+        def versions = getAvailableVersions()
+
+        if (versions.isEmpty()) {
+            println "\nNo versions found in bin/ or bin/archived/ directories"
+            return
+        }
+
+        println "\nAvailable ${bundleName} versions:"
+        println "-".multiply(60)
+        
+        // Show which directory each version is in
+        def binDir = file("${projectDir}/bin")
+        def archivedDir = file("${projectDir}/bin/archived")
+        
+        versions.each { version ->
+            def location = ""
+            if (binDir.exists() && file("${binDir}/${bundleName}${version}").exists()) {
+                location = "[bin]"
+            } else if (archivedDir.exists() && file("${archivedDir}/${bundleName}${version}").exists()) {
+                location = "[bin/archived]"
+            }
+            println "  ${version.padRight(15)} ${location}"
+        }
+        println "-".multiply(60)
+        println "Total versions: ${versions.size()}"
+
+        if (!versions.isEmpty()) {
+            println "\nTo build a specific version:"
+            println "  gradle release -PbundleVersion=${versions.last()}"
+        }
+    }
+}
+
+// Task: Validate build.properties
+tasks.register('validateProperties') {
+    group = 'verification'
+    description = 'Validate build.properties configuration'
+
+    doLast {
+        println "Validating build.properties..."
+
+        def required = ['bundle.name', 'bundle.release', 'bundle.type', 'bundle.format']
+        def missing = []
+
+        required.each { prop ->
+            if (!buildProps.containsKey(prop) || buildProps.getProperty(prop).trim().isEmpty()) {
+                missing.add(prop)
+            }
+        }
+
+        if (missing.isEmpty()) {
+            println "[SUCCESS] All required properties are present:"
+            required.each { prop ->
+                println "    ${prop} = ${buildProps.getProperty(prop)}"
+            }
+        } else {
+            println "[ERROR] Missing required properties:"
+            missing.each { prop ->
+                println "    - ${prop}"
+            }
+            throw new GradleException("build.properties validation failed")
+        }
+    }
+}
+
+// Task: Check Apache modules configuration
+tasks.register('checkModules') {
+    group = 'verification'
+    description = 'Check Apache modules configuration in bin directories'
+
+    doLast {
+        def binDir = file("${projectDir}/bin")
+        if (!binDir.exists()) {
+            println "bin/ directory not found"
+            return
+        }
+
+        println "\nChecking Apache modules configuration..."
+        println "-".multiply(80)
+
+        def versions = binDir.listFiles()
+            ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) }
+            ?.sort { it.name } ?: []
+
+        versions.each { versionDir ->
+            def modulesFile = new File(versionDir, 'modules.properties')
+            if (modulesFile.exists()) {
+                def modules = new Properties()
+                modulesFile.withInputStream { modules.load(it) }
+                println "\n${versionDir.name}:"
+                println "  Modules file: Found (${modules.size()} modules)"
+                modules.each { name, url ->
+                    println "    - ${name}"
+                }
+            } else {
+                println "\n${versionDir.name}:"
+                println "  Modules file: Not found"
+            }
+        }
+        println "-".multiply(80)
+    }
+}
+
+// ============================================================================
+// BUILD LIFECYCLE HOOKS
+// ============================================================================
+
+gradle.taskGraph.whenReady { graph ->
+    println """
+    ================================================================
+      Bearsampp Module Apache - Gradle Build
+    ================================================================
+    """.stripIndent()
+}
+
+// ============================================================================
+// DEFAULT TASK
+// ============================================================================
+
+defaultTasks 'info'

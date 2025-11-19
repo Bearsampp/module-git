@@ -1,0 +1,4 @@
+// Gradle settings (Groovy DSL)
+// This project intentionally uses Groovy, not Kotlin, for build scripts.
+
+rootProject.name = 'module-git'
