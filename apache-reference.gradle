@@ -1316,7 +1316,25 @@ tasks.register('checkModules') {
 
         def versions = binDir.listFiles()
             ?.findAll { it.isDirectory() && it.name.startsWith(bundleName) }
-            ?.sort { it.name } ?: []
+            ?: []
+
+        // Semantic sort by the version suffix (the part after the bundle name)
+        versions = versions.sort { a, b ->
+            def aVer = a.name.replace(bundleName, '')
+            def bVer = b.name.replace(bundleName, '')
+            def aParts = aVer.tokenize('.').collect { it.isInteger() ? it.toInteger() : it }
+            def bParts = bVer.tokenize('.').collect { it.isInteger() ? it.toInteger() : it }
+            for (int i = 0; i < Math.max(aParts.size(), bParts.size()); i++) {
+                def aVal = i < aParts.size() ? aParts[i] : 0
+                def bVal = i < bParts.size() ? bParts[i] : 0
+                if (aVal.getClass() != bVal.getClass()) {
+                    aVal = aVal.toString()
+                    bVal = bVal.toString()
+                }
+                if (aVal != bVal) return aVal <=> bVal
+            }
+            return 0
+        }
 
         versions.each { versionDir ->
             def modulesFile = new File(versionDir, 'modules.properties')
